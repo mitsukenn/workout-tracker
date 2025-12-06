@@ -1,0 +1,32 @@
+name: Build Test
+
+# どのタイミングでロボットを動かすか
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+# ロボットがやる仕事の内容
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. GitHubからコードを持ってきた上で
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 2. Node.js (プログラムを動かすソフト) をセットアップして
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    # 3. 必要な部品をインストールして
+    - name: Install dependencies
+      run: npm install
+
+    # 4. ビルド（テスト）を実行する！
+    - name: Run Build
+      run: npm run build

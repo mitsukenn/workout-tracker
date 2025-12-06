@@ -1,0 +1,10 @@
+{
+  "files": {
+    "main.js": "/workout-tracker/static/js/main.3bf1d161.js",
+    "index.html": "/workout-tracker/index.html",
+    "main.3bf1d161.js.map": "/workout-tracker/static/js/main.3bf1d161.js.map"
+  },
+  "entrypoints": [
+    "static/js/main.3bf1d161.js"
+  ]
+}

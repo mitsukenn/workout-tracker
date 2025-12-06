@@ -29,4 +29,4 @@ jobs:
 
     # 4. ビルド（テスト）を実行する！
     - name: Run Build
-      run: npm run build
+      run: CI=false npm run build

@@ -170,10 +170,9 @@ export default function App() {
     const daysInMonth = new Date(year, month, 0).getDate(); // 今月の日数
     const prefix = `${year}-${String(month).padStart(2, '0')}`;
 
-    // 1. 活動日数のカウント（ジムに行った or 家トレした日）
+    // 1. 活動日数のカウント（ジムに行った日のみカウント）
     const recordDates = new Set([
-      ...Object.keys(history).filter(d => d.startsWith(prefix)),
-      ...Object.keys(squatHistory).filter(d => d.startsWith(prefix) && getDailySquatTotal(d) > 0)
+      ...Object.keys(history).filter(d => d.startsWith(prefix))
     ]);
     const activeDays = recordDates.size;
 
@@ -254,8 +253,7 @@ export default function App() {
 
     // 1. 活動日数のカウント
     const recordDates = new Set([
-      ...Object.keys(history).filter(d => d.startsWith(prefix)),
-      ...Object.keys(squatHistory).filter(d => d.startsWith(prefix) && getDailySquatTotal(d) > 0)
+      ...Object.keys(history).filter(d => d.startsWith(prefix))
     ]);
     const activeDays = recordDates.size;
 
@@ -279,8 +277,7 @@ export default function App() {
       const prefix = `${year}-${String(month).padStart(2, '0')}`;
 
       const recordDates = new Set([
-        ...Object.keys(history).filter(d => d.startsWith(prefix)),
-        ...Object.keys(squatHistory).filter(d => d.startsWith(prefix) && getDailySquatTotal(d) > 0)
+        ...Object.keys(history).filter(d => d.startsWith(prefix))
       ]);
 
       const sortedDates = Array.from(recordDates).sort();
@@ -438,8 +435,7 @@ export default function App() {
 
     // 月間集計（Rate計算ロジックと同じ：日数＋ボーナス）
     const recordDates = new Set([
-      ...Object.keys(history).filter(d => d.startsWith(prefix)),
-      ...Object.keys(squatHistory).filter(d => d.startsWith(prefix) && getDailySquatTotal(d) > 0)
+      ...Object.keys(history).filter(d => d.startsWith(prefix))
     ]);
     const activeDays = recordDates.size;
 

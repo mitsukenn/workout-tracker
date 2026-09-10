@@ -4,6 +4,20 @@ import {
   Share2, Clock, Calendar as CalendarIcon, Settings, Plus, Trash2, Save,
   BarChart2, List
 } from 'lucide-react';
+import { isSupabaseEnabled, supabaseDisabledReason } from './supabase';
+import {
+  loadAllFromSupabase,
+  syncHistory, syncSquatHistory, syncReservations, syncMenus, syncSquatSettings,
+  setWriteEnabled, onSyncStatus, debounce,
+} from './sync';
+import { safeGet, safeSet, applyBackup, downloadBackup } from './storage';
+
+// デバウンス済みのSupabase同期関数（モジュールレベルで生成して全体で共有）
+const debouncedSyncHistory = debounce(syncHistory, 1500);
+const debouncedSyncSquatHistory = debounce(syncSquatHistory, 1500);
+const debouncedSyncReservations = debounce(syncReservations, 1500);
+const debouncedSyncMenus = debounce(syncMenus, 1500);
+const debouncedSyncSquatSettings = debounce(syncSquatSettings, 1500);
 
 // html2canvasをCDNから読み込む関数
 const loadHtml2Canvas = () => {
@@ -79,6 +93,234 @@ const DEFAULT_MENUS = {
   }
 };
 
+function SettingsView({
+  menus, squatSettings, setMenus, setSquatSettings, setSquatInput, setCurrentView,
+  syncLabel, syncStatus, isSyncWarning, onResync, onExport, onImport,
+}) {
+  // 編集中のタブID（A, B, C, D, squat）
+  const [editingTabId, setEditingTabId] = useState('A');
+  const [localMenus, setLocalMenus] = useState(menus);
+  const [localSquat, setLocalSquat] = useState(squatSettings);
+
+  const isSquatTab = editingTabId === 'squat';
+  const activeMenu = !isSquatTab ? localMenus[editingTabId] : null;
+
+  const toggleMenuActive = (id) => {
+    setLocalMenus(prev => ({ ...prev, [id]: { ...prev[id], isActive: !prev[id].isActive } }));
+  };
+
+  const updateMenuItem = (index, field, value) => {
+    const newItems = [...activeMenu.items];
+    newItems[index] = { ...newItems[index], [field]: value };
+    setLocalMenus(prev => ({ ...prev, [editingTabId]: { ...prev[editingTabId], items: newItems } }));
+  };
+
+  const addItem = () => {
+    const newItems = [...activeMenu.items, { name: '新規種目', detail: '', sets: 1 }];
+    setLocalMenus(prev => ({ ...prev, [editingTabId]: { ...prev[editingTabId], items: newItems } }));
+  };
+
+  const removeItem = (index) => {
+    const newItems = activeMenu.items.filter((_, i) => i !== index);
+    setLocalMenus(prev => ({ ...prev, [editingTabId]: { ...prev[editingTabId], items: newItems } }));
+  };
+
+  const saveAll = () => {
+    setMenus(localMenus);
+    setSquatSettings(localSquat);
+    setSquatInput({ reps: localSquat.defaultReps, sets: localSquat.defaultSets });
+    setCurrentView('home');
+    alert('設定を保存しました');
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-4 font-sans pb-20">
+      <header className="mb-6 flex items-center gap-2 pt-2">
+        <button onClick={() => setCurrentView('home')} className="bg-white text-gray-500 hover:bg-gray-100 border border-gray-200 p-2 rounded-full shadow-sm"><ChevronLeft size={20} /></button>
+        <h1 className="text-lg font-bold text-gray-800">設定</h1>
+      </header>
+
+      <div className="bg-white rounded-2xl shadow-sm p-5">
+        <h2 className="text-sm font-bold text-gray-500 mb-4 flex items-center gap-2"><Settings size={16} /> メニュー設定</h2>
+
+        {/* タブ */}
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-2 no-scrollbar">
+          {Object.values(localMenus).map(m => (
+            <button
+              key={m.id}
+              onClick={() => setEditingTabId(m.id)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-colors border-2 ${editingTabId === m.id ? `${m.borderColor} ${m.bgColor} ${m.textColor}` : 'border-transparent bg-gray-100 text-gray-400'}`}
+            >
+              {m.title}
+            </button>
+          ))}
+          <button
+            onClick={() => setEditingTabId('squat')}
+            className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-colors border-2 ${editingTabId === 'squat' ? 'border-green-500 bg-green-50 text-green-600' : 'border-transparent bg-gray-100 text-gray-400'}`}
+          >
+            ジム外メニュー
+          </button>
+        </div>
+
+        {/* 編集エリア */}
+        {isSquatTab ? (
+          <div className="border-2 rounded-2xl p-4 border-green-500 bg-green-50 bg-opacity-20">
+            <h3 className="font-bold text-green-800 mb-4">ジム外アクティビティ設定</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-green-600 font-bold block mb-1">メニュー名（例：自重スクワット、宅トレ）</label>
+                <input
+                  value={localSquat.name}
+                  onChange={(e) => setLocalSquat({ ...localSquat, name: e.target.value })}
+                  className="w-full p-2 rounded-lg border border-green-200 font-bold"
+                  placeholder="自重スクワット"
+                />
+              </div>
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="text-xs text-green-600 font-bold block mb-1">デフォルト回数</label>
+                  <input
+                    type="number"
+                    value={localSquat.defaultReps}
+                    onChange={(e) => setLocalSquat({ ...localSquat, defaultReps: Number(e.target.value) })}
+                    className="w-full p-2 rounded-lg border border-green-200 text-center font-bold"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-green-600 font-bold block mb-1">デフォルトセット数</label>
+                  <input
+                    type="number"
+                    value={localSquat.defaultSets}
+                    onChange={(e) => setLocalSquat({ ...localSquat, defaultSets: Number(e.target.value) })}
+                    className="w-full p-2 rounded-lg border border-green-200 text-center font-bold"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-green-600 font-bold block mb-1">単位（例：回、分、秒）</label>
+                <input
+                  value={localSquat.unit}
+                  onChange={(e) => setLocalSquat({ ...localSquat, unit: e.target.value })}
+                  className="w-16 p-2 rounded-lg border border-green-200 text-center font-bold"
+                  placeholder="回"
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className={`border-2 rounded-2xl p-4 ${activeMenu.borderColor} ${activeMenu.bgColor} bg-opacity-20`}>
+            <div className="flex justify-between items-center mb-4">
+              <span className={`font-bold ${activeMenu.textColor}`}>このメニューを使用する</span>
+              <button
+                onClick={() => toggleMenuActive(editingTabId)}
+                className={`w-12 h-6 rounded-full p-1 transition-colors ${activeMenu.isActive ? 'bg-green-500' : 'bg-gray-300'}`}
+              >
+                <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${activeMenu.isActive ? 'translate-x-6' : ''}`}></div>
+              </button>
+            </div>
+
+            {activeMenu.isActive && (
+              <div className="space-y-3">
+                {/* フォントサイズ調整箇所 */}
+                {activeMenu.items.map((item, idx) => (
+                  <div key={idx} className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex gap-2 items-start">
+                    <div className="flex-1 space-y-2">
+                      <input
+                        value={item.name}
+                        onChange={(e) => updateMenuItem(idx, 'name', e.target.value)}
+                        className="w-full text-sm font-bold border-b border-gray-200 focus:border-green-500 outline-none pb-1"
+                        placeholder="種目名"
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={item.detail}
+                          onChange={(e) => updateMenuItem(idx, 'detail', e.target.value)}
+                          className="flex-1 text-xs text-gray-500 border-b border-gray-200 focus:border-green-500 outline-none pb-1"
+                          placeholder="重さ・回数など"
+                        />
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            value={item.sets}
+                            onChange={(e) => updateMenuItem(idx, 'sets', Number(e.target.value))}
+                            className="w-10 text-xs text-center border-b border-gray-200 focus:border-green-500 outline-none pb-1"
+                          />
+                          <span className="text-xs text-gray-400">set</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button onClick={() => removeItem(idx)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={16} /></button>
+                  </div>
+                ))}
+                <button onClick={addItem} className="w-full py-3 bg-white border-2 border-dashed border-gray-300 text-gray-400 rounded-xl font-bold text-sm hover:bg-gray-50 flex items-center justify-center gap-2">
+                  <Plus size={16} /> 種目を追加
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* データの保存先とバックアップ */}
+      <div className="bg-white rounded-2xl shadow-sm p-5 mt-4">
+        <h2 className="text-sm font-bold text-gray-500 mb-3 flex items-center gap-2">
+          <Save size={16} /> データの保存先
+        </h2>
+
+        <div className={`rounded-xl px-3 py-2 text-xs font-bold inline-block mb-3 ${syncLabel.cls}`}>
+          {syncLabel.text}
+        </div>
+        {syncStatus.detail && (
+          <p className="text-[11px] text-gray-400 mb-3 break-all">{syncStatus.detail}</p>
+        )}
+
+        <p className="text-xs text-gray-500 leading-relaxed mb-4">
+          {isSyncWarning
+            ? 'いまの記録はこの端末の中だけにあります。スマホがデータを自動削除すると消えるので、定期的にバックアップを保存してください。'
+            : 'クラウドに保存されています。端末を変えても記録は残ります。'}
+        </p>
+
+        <div className="space-y-2">
+          <button
+            onClick={() => onResync()}
+            className="w-full py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50"
+          >
+            クラウドと再同期する
+          </button>
+          <button
+            onClick={onExport}
+            className="w-full py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50"
+          >
+            バックアップを書き出す（JSON）
+          </button>
+          <label className="block w-full py-3 rounded-xl border-2 border-dashed border-gray-300 text-gray-500 font-bold text-sm text-center cursor-pointer hover:bg-gray-50">
+            バックアップを取り込む
+            <input
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files && e.target.files[0];
+                if (file) onImport(file);
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </div>
+        <p className="text-[11px] text-gray-400 mt-3">
+          取り込みは既存の記録を消しません（不足分だけ足します）。
+        </p>
+      </div>
+
+      <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100">
+        <button onClick={saveAll} className="w-full py-4 bg-green-500 text-white rounded-xl font-bold text-lg shadow-lg shadow-green-200 hover:bg-green-600 flex items-center justify-center gap-2">
+          <Save size={20} /> 設定を保存する
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [history, setHistory] = useState({});
   const [squatHistory, setSquatHistory] = useState({});
@@ -109,39 +351,143 @@ export default function App() {
   // スクワット画面の表示モード（'list' or 'chart'）
   const [squatViewMode, setSquatViewMode] = useState('list');
 
-  // 初期ロード
-  useEffect(() => {
-    const savedHistory = localStorage.getItem('workoutHistory');
-    const savedSquatHistory = localStorage.getItem('workoutSquatHistory');
-    const savedReservations = localStorage.getItem('workoutReservations');
-    const savedMenus = localStorage.getItem('workoutMenus');
-    const savedSquatSettings = localStorage.getItem('workoutSquatSettings');
+  // 初回ロード完了フラグ（Supabase同期の誤爆防止）
+  const [isLoaded, setIsLoaded] = useState(false);
+  // クラウド同期の状態表示（黙って失敗させないため）
+  const [syncStatus, setSyncStatus] = useState({
+    state: isSupabaseEnabled ? 'loading' : 'local-only',
+    detail: supabaseDisabledReason || '',
+  });
+  const [reloadKey, setReloadKey] = useState(0);
 
-    if (savedHistory) setHistory(JSON.parse(savedHistory));
-    if (savedSquatHistory) setSquatHistory(JSON.parse(savedSquatHistory));
-    if (savedReservations) setReservations(JSON.parse(savedReservations));
-    if (savedMenus) setMenus(JSON.parse(savedMenus));
-    if (savedSquatSettings) {
-      const settings = JSON.parse(savedSquatSettings);
-      setSquatSettings({
+  // sync.js からのステータス通知を受け取る
+  useEffect(() => {
+    onSyncStatus(({ state, detail }) => setSyncStatus({ state, detail }));
+    return () => onSyncStatus(null);
+  }, []);
+
+  // 初期ロード：Supabase → localStorage の順で読み込み
+  useEffect(() => {
+    const applySettings = (settings) => {
+      const merged = {
         name: '自重スクワット',
         defaultReps: 30,
         defaultSets: 1,
         unit: '回',
         countCondition: 'conditional',
         conditionValue: 100,
-        ...settings
-      });
-      setSquatInput({ reps: settings.defaultReps, sets: settings.defaultSets });
-    }
-  }, []);
+        ...settings,
+      };
+      setSquatSettings(merged);
+      setSquatInput({ reps: merged.defaultReps, sets: merged.defaultSets });
+    };
 
-  // データ保存
-  useEffect(() => { localStorage.setItem('workoutHistory', JSON.stringify(history)); }, [history]);
-  useEffect(() => { localStorage.setItem('workoutSquatHistory', JSON.stringify(squatHistory)); }, [squatHistory]);
-  useEffect(() => { localStorage.setItem('workoutReservations', JSON.stringify(reservations)); }, [reservations]);
-  useEffect(() => { localStorage.setItem('workoutMenus', JSON.stringify(menus)); }, [menus]);
-  useEffect(() => { localStorage.setItem('workoutSquatSettings', JSON.stringify(squatSettings)); }, [squatSettings]);
+    const loadLocal = () => {
+      const savedHistory = safeGet('workoutHistory');
+      const savedSquatHistory = safeGet('workoutSquatHistory');
+      const savedReservations = safeGet('workoutReservations');
+      const savedMenus = safeGet('workoutMenus');
+      const savedSquatSettings = safeGet('workoutSquatSettings');
+      if (savedHistory) setHistory(savedHistory);
+      if (savedSquatHistory) setSquatHistory(savedSquatHistory);
+      if (savedReservations) setReservations(savedReservations);
+      if (savedMenus) setMenus(savedMenus);
+      if (savedSquatSettings) applySettings(savedSquatSettings);
+    };
+
+    let cancelled = false;
+
+    (async () => {
+      // 読み込みが終わるまでクラウドへの書き込みを禁止する。
+      // （旧実装はここで空データをクラウドに書き戻して全消ししていた）
+      setWriteEnabled(false);
+      setIsLoaded(false);
+
+      // まずlocalStorageから即座に反映（オフラインでも開ける）
+      loadLocal();
+
+      if (!isSupabaseEnabled) {
+        // クラウド未設定。この端末だけの保存になるので書き込みは有効化しない
+        if (!cancelled) setIsLoaded(true);
+        return;
+      }
+
+      const remote = await loadAllFromSupabase();
+      if (cancelled) return;
+
+      if (!remote.ok) {
+        // 読み込み失敗＝クラウドの中身が分からない。絶対に書き戻さない。
+        // localStorage の内容だけで動かし、画面に警告を出す。
+        setIsLoaded(true);
+        return;
+      }
+
+      if (!remote.data.isEmpty) {
+        // クラウドが正（複数端末で使うため）
+        setHistory(remote.data.history);
+        setSquatHistory(remote.data.squatHistory);
+        setReservations(remote.data.reservations);
+        if (Object.keys(remote.data.menus).length > 0) setMenus(remote.data.menus);
+        if (remote.data.squatSettings) applySettings(remote.data.squatSettings);
+      }
+      // クラウドが空なら、この端末のデータをそのまま初回アップロードさせる
+
+      setWriteEnabled(true);
+      setIsLoaded(true);
+    })();
+
+    return () => { cancelled = true; };
+  }, [reloadKey]);
+
+  // localStorage への保存（オフライン用キャッシュ・即時）
+  useEffect(() => { safeSet('workoutHistory', history); }, [history]);
+  useEffect(() => { safeSet('workoutSquatHistory', squatHistory); }, [squatHistory]);
+  useEffect(() => { safeSet('workoutReservations', reservations); }, [reservations]);
+  useEffect(() => { safeSet('workoutMenus', menus); }, [menus]);
+  useEffect(() => { safeSet('workoutSquatSettings', squatSettings); }, [squatSettings]);
+
+  // Supabaseへのデバウンス同期（初回ロード完了後のみ・sync.js側でも二重にガード）
+  useEffect(() => { if (isLoaded) debouncedSyncHistory(history); }, [history, isLoaded]);
+  useEffect(() => { if (isLoaded) debouncedSyncSquatHistory(squatHistory); }, [squatHistory, isLoaded]);
+  useEffect(() => { if (isLoaded) debouncedSyncReservations(reservations); }, [reservations, isLoaded]);
+  useEffect(() => { if (isLoaded) debouncedSyncMenus(menus); }, [menus, isLoaded]);
+  useEffect(() => { if (isLoaded) debouncedSyncSquatSettings(squatSettings); }, [squatSettings, isLoaded]);
+
+  // 同期状態の見た目（データが保存されているか一目で分かるようにする）
+  const SYNC_LABELS = {
+    loading: { text: 'クラウド確認中…', cls: 'bg-gray-100 text-gray-500' },
+    synced: { text: 'クラウド保存OK', cls: 'bg-green-100 text-green-700' },
+    saving: { text: '保存中…', cls: 'bg-blue-100 text-blue-700' },
+    error: { text: '⚠ クラウド未保存', cls: 'bg-red-100 text-red-700' },
+    'local-only': { text: '⚠ この端末のみ', cls: 'bg-amber-100 text-amber-700' },
+  };
+  const syncLabel = SYNC_LABELS[syncStatus.state] || SYNC_LABELS.loading;
+  const isSyncWarning = syncStatus.state === 'error' || syncStatus.state === 'local-only';
+
+  // バックアップ操作
+  const currentDataSnapshot = () => ({ history, squatHistory, reservations, menus, squatSettings });
+
+  const exportBackup = () => {
+    downloadBackup(currentDataSnapshot());
+  };
+
+  const importBackup = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const merged = applyBackup(JSON.parse(reader.result), currentDataSnapshot());
+        setHistory(merged.history);
+        setSquatHistory(merged.squatHistory);
+        setReservations(merged.reservations);
+        setMenus(merged.menus);
+        if (merged.squatSettings) setSquatSettings(merged.squatSettings);
+        alert('バックアップを取り込みました');
+      } catch (err) {
+        alert('取り込みに失敗しました: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
 
   // 日付関連ユーティリティ
   const getTodayString = () => formatDateString(new Date());
@@ -281,8 +627,13 @@ export default function App() {
       ]);
 
       const sortedDates = Array.from(recordDates).sort();
-      let shareText = `【運動・筋トレ記録】\n`;
+
+      // ヘッダーに月を表示
+      let shareText = `【運動・筋トレ記録】${month}月\n`;
       let dayCount = 1;
+
+      // ジム日数をカウント
+      let gymDays = 0;
 
       sortedDates.forEach(dateStr => {
         const [y, m, d] = dateStr.split('-').map(Number);
@@ -293,19 +644,24 @@ export default function App() {
         const squatTotal = getDailySquatTotal(dateStr);
 
         let content = [];
-        if (type) content.push(`メニュー${type}`);
-        if (squatTotal > 0) content.push(`${squatSettings.name}(${squatTotal}${squatSettings.unit})`);
+        if (type) {
+          content.push(type);
+          gymDays++;
+        }
+        if (squatTotal > 0) content.push(`スクワット(${squatTotal})`);
 
         if (content.length > 0) {
-          shareText += `day${dayCount}：${m}/${d}(${dayLabel}) ${content.join(' & ')}\n`;
+          const dayStr = String(d).padStart(2, ' ');
+          shareText += `day${dayCount}：${dayStr}(${dayLabel}) ${content.join(' & ')}\n`;
           dayCount++;
         }
       });
 
       // 月間集計情報
       const paceData = calculatePaceInfo();
-      shareText += `\n今月の予測: ${paceData.pace}回 (Rank: ${paceData.rank})\n`;
-      shareText += `今月の貯筋: ${paceData.monthlySquatTotal}${squatSettings.unit}\n`;
+      shareText += `\n\nチョコザップ実績: ${gymDays}回\n`;
+      shareText += `スクワット貯筋: ${paceData.monthlySquatTotal}${squatSettings.unit}\n`;
+      shareText += `Rank: ${paceData.rank}\n`;
 
       let imageFile = null;
       if (calendarRef.current) {
@@ -453,7 +809,7 @@ export default function App() {
           <div className="flex-1 flex justify-between items-center px-2">
             <h2 className="font-bold text-xl text-gray-800 tracking-tight">{yearMonth}</h2>
             <div className="text-xs font-medium text-gray-400 bg-gray-50 px-2 py-1 rounded">
-              実績: <span className="text-gray-700 font-bold text-sm">{totalScore}</span> 回
+              実績: <span className="text-gray-700 font-bold text-sm">{activeDays}+{bonusPoints}</span> 回
             </div>
           </div>
           <button onClick={() => changeMonth(1)} className="p-2 hover:bg-gray-100 rounded-full" data-html2canvas-ignore><ChevronRight size={20} className="text-gray-400" /></button>
@@ -578,12 +934,12 @@ export default function App() {
             {/* 入力フォーム */}
             <div className="flex gap-2 items-center">
               <div className="flex-1 bg-white border border-gray-200 rounded-lg flex items-center px-2">
-                <input className="w-full py-2 text-center font-bold text-gray-700 outline-none" type="number" value={squatInput.reps} onChange={e => setSquatInput({ ...squatInput, reps: Number(e.target.value) })} />
+                <input className="w-full py-2 text-center font-bold text-gray-700 outline-none" type="number" value={squatInput.reps} onChange={e => setSquatInput({ ...squatInput, reps: e.target.value === '' ? '' : Number(e.target.value) })} />
                 <span className="text-[10px] text-gray-400 whitespace-nowrap">{squatSettings.unit}</span>
               </div>
               <span className="text-gray-300 text-xs">×</span>
               <div className="w-16 bg-white border border-gray-200 rounded-lg flex items-center px-2">
-                <input className="w-full py-2 text-center font-bold text-gray-700 outline-none" type="number" value={squatInput.sets} onChange={e => setSquatInput({ ...squatInput, sets: Number(e.target.value) })} />
+                <input className="w-full py-2 text-center font-bold text-gray-700 outline-none" type="number" value={squatInput.sets} onChange={e => setSquatInput({ ...squatInput, sets: e.target.value === '' ? '' : Number(e.target.value) })} />
                 <span className="text-[10px] text-gray-400 whitespace-nowrap">set</span>
               </div>
               <button onClick={() => addSquatRecord(formatDateString(editingDate))} className="bg-green-500 text-white p-2 rounded-lg shadow-sm hover:bg-green-600"><Plus size={18} /></button>
@@ -626,182 +982,24 @@ export default function App() {
   };
 
   // --- 設定画面 ---
-  const SettingsView = () => {
-    // 編集中のタブID（A, B, C, D, squat）
-    const [editingTabId, setEditingTabId] = useState('A');
-    const [localMenus, setLocalMenus] = useState(menus);
-    const [localSquat, setLocalSquat] = useState(squatSettings);
-
-    const isSquatTab = editingTabId === 'squat';
-    const activeMenu = !isSquatTab ? localMenus[editingTabId] : null;
-
-    const toggleMenuActive = (id) => {
-      setLocalMenus(prev => ({ ...prev, [id]: { ...prev[id], isActive: !prev[id].isActive } }));
-    };
-
-    const updateMenuItem = (index, field, value) => {
-      const newItems = [...activeMenu.items];
-      newItems[index] = { ...newItems[index], [field]: value };
-      setLocalMenus(prev => ({ ...prev, [editingTabId]: { ...prev[editingTabId], items: newItems } }));
-    };
-
-    const addItem = () => {
-      const newItems = [...activeMenu.items, { name: '新規種目', detail: '', sets: 1 }];
-      setLocalMenus(prev => ({ ...prev, [editingTabId]: { ...prev[editingTabId], items: newItems } }));
-    };
-
-    const removeItem = (index) => {
-      const newItems = activeMenu.items.filter((_, i) => i !== index);
-      setLocalMenus(prev => ({ ...prev, [editingTabId]: { ...prev[editingTabId], items: newItems } }));
-    };
-
-    const saveAll = () => {
-      setMenus(localMenus);
-      setSquatSettings(localSquat);
-      setSquatInput({ reps: localSquat.defaultReps, sets: localSquat.defaultSets });
-      setCurrentView('home');
-      alert('設定を保存しました');
-    };
-
-    return (
-      <div className="min-h-screen bg-gray-50 p-4 font-sans pb-20">
-        <header className="mb-6 flex items-center gap-2 pt-2">
-          <button onClick={() => setCurrentView('home')} className="bg-white text-gray-500 hover:bg-gray-100 border border-gray-200 p-2 rounded-full shadow-sm"><ChevronLeft size={20} /></button>
-          <h1 className="text-lg font-bold text-gray-800">設定</h1>
-        </header>
-
-        <div className="bg-white rounded-2xl shadow-sm p-5">
-          <h2 className="text-sm font-bold text-gray-500 mb-4 flex items-center gap-2"><Settings size={16} /> メニュー設定</h2>
-
-          {/* タブ */}
-          <div className="flex gap-2 mb-4 overflow-x-auto pb-2 no-scrollbar">
-            {Object.values(localMenus).map(m => (
-              <button
-                key={m.id}
-                onClick={() => setEditingTabId(m.id)}
-                className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-colors border-2 ${editingTabId === m.id ? `${m.borderColor} ${m.bgColor} ${m.textColor}` : 'border-transparent bg-gray-100 text-gray-400'}`}
-              >
-                {m.title}
-              </button>
-            ))}
-            <button
-              onClick={() => setEditingTabId('squat')}
-              className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-colors border-2 ${editingTabId === 'squat' ? 'border-green-500 bg-green-50 text-green-600' : 'border-transparent bg-gray-100 text-gray-400'}`}
-            >
-              ジム外メニュー
-            </button>
-          </div>
-
-          {/* 編集エリア */}
-          {isSquatTab ? (
-            <div className="border-2 rounded-2xl p-4 border-green-500 bg-green-50 bg-opacity-20">
-              <h3 className="font-bold text-green-800 mb-4">ジム外アクティビティ設定</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs text-green-600 font-bold block mb-1">メニュー名（例：自重スクワット、宅トレ）</label>
-                  <input
-                    value={localSquat.name}
-                    onChange={(e) => setLocalSquat({ ...localSquat, name: e.target.value })}
-                    className="w-full p-2 rounded-lg border border-green-200 font-bold"
-                    placeholder="自重スクワット"
-                  />
-                </div>
-                <div className="flex gap-4">
-                  <div className="flex-1">
-                    <label className="text-xs text-green-600 font-bold block mb-1">デフォルト回数</label>
-                    <input
-                      type="number"
-                      value={localSquat.defaultReps}
-                      onChange={(e) => setLocalSquat({ ...localSquat, defaultReps: Number(e.target.value) })}
-                      className="w-full p-2 rounded-lg border border-green-200 text-center font-bold"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-xs text-green-600 font-bold block mb-1">デフォルトセット数</label>
-                    <input
-                      type="number"
-                      value={localSquat.defaultSets}
-                      onChange={(e) => setLocalSquat({ ...localSquat, defaultSets: Number(e.target.value) })}
-                      className="w-full p-2 rounded-lg border border-green-200 text-center font-bold"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs text-green-600 font-bold block mb-1">単位（例：回、分、秒）</label>
-                  <input
-                    value={localSquat.unit}
-                    onChange={(e) => setLocalSquat({ ...localSquat, unit: e.target.value })}
-                    className="w-16 p-2 rounded-lg border border-green-200 text-center font-bold"
-                    placeholder="回"
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className={`border-2 rounded-2xl p-4 ${activeMenu.borderColor} ${activeMenu.bgColor} bg-opacity-20`}>
-              <div className="flex justify-between items-center mb-4">
-                <span className={`font-bold ${activeMenu.textColor}`}>このメニューを使用する</span>
-                <button
-                  onClick={() => toggleMenuActive(editingTabId)}
-                  className={`w-12 h-6 rounded-full p-1 transition-colors ${activeMenu.isActive ? 'bg-green-500' : 'bg-gray-300'}`}
-                >
-                  <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${activeMenu.isActive ? 'translate-x-6' : ''}`}></div>
-                </button>
-              </div>
-
-              {activeMenu.isActive && (
-                <div className="space-y-3">
-                  {/* フォントサイズ調整箇所 */}
-                  {activeMenu.items.map((item, idx) => (
-                    <div key={idx} className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex gap-2 items-start">
-                      <div className="flex-1 space-y-2">
-                        <input
-                          value={item.name}
-                          onChange={(e) => updateMenuItem(idx, 'name', e.target.value)}
-                          className="w-full text-sm font-bold border-b border-gray-200 focus:border-green-500 outline-none pb-1"
-                          placeholder="種目名"
-                        />
-                        <div className="flex gap-2">
-                          <input
-                            value={item.detail}
-                            onChange={(e) => updateMenuItem(idx, 'detail', e.target.value)}
-                            className="flex-1 text-xs text-gray-500 border-b border-gray-200 focus:border-green-500 outline-none pb-1"
-                            placeholder="重さ・回数など"
-                          />
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              value={item.sets}
-                              onChange={(e) => updateMenuItem(idx, 'sets', Number(e.target.value))}
-                              className="w-10 text-xs text-center border-b border-gray-200 focus:border-green-500 outline-none pb-1"
-                            />
-                            <span className="text-xs text-gray-400">set</span>
-                          </div>
-                        </div>
-                      </div>
-                      <button onClick={() => removeItem(idx)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={16} /></button>
-                    </div>
-                  ))}
-                  <button onClick={addItem} className="w-full py-3 bg-white border-2 border-dashed border-gray-300 text-gray-400 rounded-xl font-bold text-sm hover:bg-gray-50 flex items-center justify-center gap-2">
-                    <Plus size={16} /> 種目を追加
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100">
-          <button onClick={saveAll} className="w-full py-4 bg-green-500 text-white rounded-xl font-bold text-lg shadow-lg shadow-green-200 hover:bg-green-600 flex items-center justify-center gap-2">
-            <Save size={20} /> 設定を保存する
-          </button>
-        </div>
-      </div>
-    );
-  };
 
   // --- ビューの切り替え ---
-  if (currentView === 'settings') return <SettingsView />;
+  if (currentView === 'settings') return (
+    <SettingsView
+      menus={menus}
+      squatSettings={squatSettings}
+      setMenus={setMenus}
+      setSquatSettings={setSquatSettings}
+      setSquatInput={setSquatInput}
+      setCurrentView={setCurrentView}
+      syncLabel={syncLabel}
+      syncStatus={syncStatus}
+      isSyncWarning={isSyncWarning}
+      onResync={() => setReloadKey(k => k + 1)}
+      onExport={exportBackup}
+      onImport={importBackup}
+    />
+  );
 
   if (currentView === 'workout') {
     const menu = menus[selectedMenuId];
@@ -926,9 +1124,9 @@ export default function App() {
               <div className="bg-green-50 rounded-2xl p-5 mb-4">
                 <div className="flex items-center gap-2 mb-3"><Zap size={18} className="text-green-600" /><span className="font-bold text-green-800 text-sm">今日の記録を追加</span></div>
                 <div className="flex gap-2 items-end">
-                  <div className="flex-1"><label className="text-[10px] text-green-600 font-bold block mb-1 ml-1">{squatSettings.unit}</label><input type="number" value={squatInput.reps} onChange={(e) => setSquatInput({ ...squatInput, reps: Number(e.target.value) })} className="w-full p-3 rounded-xl border border-green-200 bg-white font-bold text-xl text-center focus:border-green-500 outline-none text-gray-700" /></div>
+                  <div className="flex-1"><label className="text-[10px] text-green-600 font-bold block mb-1 ml-1">{squatSettings.unit}</label><input type="number" value={squatInput.reps} onChange={(e) => setSquatInput({ ...squatInput, reps: e.target.value === '' ? '' : Number(e.target.value) })} className="w-full p-3 rounded-xl border border-green-200 bg-white font-bold text-xl text-center focus:border-green-500 outline-none text-gray-700" /></div>
                   <div className="text-gray-300 pb-4 font-bold">×</div>
-                  <div className="flex-1"><label className="text-[10px] text-green-600 font-bold block mb-1 ml-1">セット</label><input type="number" value={squatInput.sets} onChange={(e) => setSquatInput({ ...squatInput, sets: Number(e.target.value) })} className="w-full p-3 rounded-xl border border-green-200 bg-white font-bold text-xl text-center focus:border-green-500 outline-none text-gray-700" /></div>
+                  <div className="flex-1"><label className="text-[10px] text-green-600 font-bold block mb-1 ml-1">セット</label><input type="number" value={squatInput.sets} onChange={(e) => setSquatInput({ ...squatInput, sets: e.target.value === '' ? '' : Number(e.target.value) })} className="w-full p-3 rounded-xl border border-green-200 bg-white font-bold text-xl text-center focus:border-green-500 outline-none text-gray-700" /></div>
                   <button onClick={() => addSquatRecord(getTodayString())} className="bg-green-600 text-white p-4 rounded-xl shadow-lg shadow-green-200 hover:bg-green-700 active:scale-95 transition-all"><Plus size={24} /></button>
                 </div>
               </div>
@@ -1018,8 +1216,15 @@ export default function App() {
         <div>
           <p className="text-[10px] font-bold text-yellow-500 tracking-[0.2em] mb-1">CHOCOZAP</p>
           <h1 className="text-3xl font-black text-gray-800 leading-none">
-            運動・筋トレ記録
+            筋トレ記録
           </h1>
+          <button
+            onClick={() => setCurrentView('settings')}
+            className={`mt-2 px-2 py-0.5 rounded-full text-[10px] font-bold ${syncLabel.cls}`}
+            title={syncStatus.detail}
+          >
+            {syncLabel.text}
+          </button>
         </div>
 
         {/* Rank Badge Area */}
@@ -1045,17 +1250,53 @@ export default function App() {
         </div>
       </header>
 
-      <div className="mb-8 space-y-4">
-        {todayRecord && (
-          <div className={`bg-gradient-to-r ${menus[todayRecord]?.color.replace('bg-', 'from-').replace('500', '500')} to-gray-500 rounded-2xl p-4 flex items-center gap-4 text-white shadow-lg animate-in fade-in slide-in-from-top-2`}>
-            <div className="bg-white/20 p-2 rounded-full"><Check size={24} className="text-white" /></div>
-            <div><p className="font-bold text-lg">メニュー{menus[todayRecord]?.title.replace('メニュー ', '')} 完了！</p><p className="text-white/80 text-xs">Nice workout!</p></div>
+      {isSyncWarning && (
+        <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm font-bold text-amber-800 mb-1">記録がこの端末にしか残っていません</p>
+          <p className="text-xs text-amber-700 leading-relaxed">
+            {syncStatus.detail || 'クラウドに接続できていません。'}
+            <br />
+            スマホがデータを自動削除すると記録が消えます。設定画面からバックアップを書き出してください。
+          </p>
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => setReloadKey(k => k + 1)}
+              className="px-3 py-2 rounded-lg bg-white border border-amber-300 text-amber-800 text-xs font-bold"
+            >
+              再接続する
+            </button>
+            <button
+              onClick={exportBackup}
+              className="px-3 py-2 rounded-lg bg-amber-500 text-white text-xs font-bold"
+            >
+              バックアップを保存
+            </button>
           </div>
-        )}
+        </div>
+      )}
+
+      <div className="mb-8 space-y-4">
+        {todayRecord && (() => {
+          const colorMap = {
+            A: { border: 'border-red-400', text: 'text-red-600', bg: 'bg-red-50' },
+            B: { border: 'border-blue-400', text: 'text-blue-600', bg: 'bg-blue-50' },
+            C: { border: 'border-yellow-400', text: 'text-yellow-600', bg: 'bg-yellow-50' },
+            D: { border: 'border-orange-400', text: 'text-orange-600', bg: 'bg-orange-50' }
+          };
+          const colors = colorMap[todayRecord] || { border: 'border-gray-400', text: 'text-gray-600', bg: 'bg-gray-50' };
+          return (
+            <div className={`relative overflow-hidden ${colors.bg} border-l-4 ${colors.border} rounded-2xl p-4 flex items-center gap-4 shadow-sm`}>
+              <img src="./celebration.png" alt="" className="absolute right-0 top-0 h-full w-28 object-cover opacity-60" />
+              <div className={`${colors.bg} p-2 rounded-full z-10 border ${colors.border}`}><Check size={24} className={colors.text} /></div>
+              <div className="z-10"><p className={`font-bold text-lg ${colors.text}`}>メニュー{menus[todayRecord]?.title.replace('メニュー ', '')} 完了！</p><p className="text-gray-500 text-xs">Nice workout!</p></div>
+            </div>
+          );
+        })()}
         {isTodaySquatDone && (
-          <div className="bg-gradient-to-r from-green-400 to-emerald-500 rounded-2xl p-4 flex items-center gap-4 text-white shadow-lg shadow-green-200 animate-in fade-in slide-in-from-top-2">
-            <div className="bg-white/20 p-2 rounded-full"><Activity size={24} className="text-white" /></div>
-            <div><p className="font-bold text-lg">{squatSettings.name} {todaySquat}{squatSettings.unit}</p><p className="text-green-100 text-xs">ナイス貯筋！</p></div>
+          <div className="relative overflow-hidden bg-green-50 border-l-4 border-green-400 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
+            <img src="./squat.png" alt="" className="absolute right-0 top-0 h-full w-28 object-cover opacity-60" />
+            <div className="bg-green-50 p-2 rounded-full z-10 border border-green-400"><Activity size={24} className="text-green-600" /></div>
+            <div className="z-10"><p className="font-bold text-lg text-green-700">{squatSettings.name} {todaySquat}{squatSettings.unit}</p><p className="text-gray-500 text-xs">ナイス貯筋！</p></div>
           </div>
         )}
 
@@ -1069,7 +1310,7 @@ export default function App() {
             <div className="grid grid-cols-2 gap-4">
               {Object.values(menus).filter(m => m.isActive).map(menu => (
                 <button key={menu.id} onClick={() => startWorkout(menu.id)} className={`relative overflow-hidden bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all group text-left border-l-4 ${menu.borderColor}`}>
-                  <div className={`absolute top-0 right-0 w-16 h-16 ${menu.bgColor} rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110 opacity-50`}></div>
+                  <img src={`./menu_${menu.id.toLowerCase()}.png`} alt="" className="absolute -right-2 -top-2 w-20 h-20 object-cover opacity-40 group-hover:opacity-60 transition-opacity rounded-xl" />
                   <span className={`block ${menu.textColor} font-black text-lg mb-1 relative z-10`}>{menu.title}</span>
                   <span className="block text-gray-500 font-medium text-xs relative z-10 line-clamp-2 leading-relaxed">{menu.items.map(i => i.name).join(' & ')}</span>
                 </button>
@@ -1080,8 +1321,9 @@ export default function App() {
 
         <div className="pt-4 border-t border-gray-100">
           <p className="text-gray-400 font-bold flex items-center gap-2 text-xs uppercase tracking-wider mb-3 px-1"><Zap size={14} /> ジム外アクティビティ</p>
-          <button onClick={() => setCurrentView('squat')} className="w-full bg-white border border-green-100 p-5 rounded-2xl shadow-sm flex items-center justify-between group hover:border-green-300 hover:shadow-md transition-all">
-            <div className="flex items-center gap-4">
+          <button onClick={() => setCurrentView('squat')} className="relative overflow-hidden w-full bg-white border border-green-100 p-5 rounded-2xl shadow-sm flex items-center justify-between group hover:border-green-300 hover:shadow-md transition-all">
+            <img src="./squat.png" alt="" className="absolute right-0 top-0 h-full w-28 object-cover opacity-60 group-hover:opacity-80 transition-opacity" />
+            <div className="flex items-center gap-4 z-10">
               <div className="bg-green-100 p-3 rounded-xl text-green-600 group-hover:bg-green-500 group-hover:text-white transition-colors"><Zap size={22} /></div>
               <div className="text-left">
                 <span className="block text-gray-800 font-bold text-lg">{squatSettings.name}</span>
@@ -1090,7 +1332,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <ChevronRight className="text-gray-300 group-hover:text-green-500 transition-colors" />
+            <ChevronRight className="text-gray-300 group-hover:text-green-500 transition-colors z-10" />
           </button>
         </div>
       </div>

@@ -3,6 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,22 +14,45 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
 
     - name: Install dependencies
-      run: npm install
+      run: npm ci
+
+    # Vite は import.meta.env をビルド時に埋め込むので、
+    # ここで環境変数を渡さないと公開版がクラウド保存なしになる。
+    # （2025年12月〜2026年9月まで、まさにこれでデータが端末内だけになっていた）
+    - name: Check Supabase secrets
+      run: |
+        if [ -z "${{ secrets.VITE_SUPABASE_URL }}" ] || [ -z "${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}" ]; then
+          echo "::error::VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY が GitHub Secrets に未設定です。"
+          echo "::error::このままビルドすると、公開版がクラウド保存なし（端末内のみ）になります。"
+          exit 1
+        fi
 
     - name: Run Build
-      run: CI=false npm run build
+      env:
+        VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      run: npm run build
 
-    # ここから下が追加した「公開（デプロイ）」の指示です
+    # ビルド結果に Supabase の接続先が入っているか最終確認
+    - name: Verify cloud sync is bundled
+      run: |
+        if ! grep -rq "supabase.co" dist/assets; then
+          echo "::error::ビルド結果に Supabase の接続先が含まれていません。デプロイを中止します。"
+          exit 1
+        fi
+        echo "✅ クラウド保存が有効な状態でビルドされています"
+
+    # Vite の出力先は dist（旧CRAの build ではない）
     - name: Deploy to GitHub Pages
-      uses: peaceiris/actions-gh-pages@v3
+      uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./build
+        publish_dir: ./dist

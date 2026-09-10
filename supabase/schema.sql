@@ -1,38 +1,37 @@
 -- ============================================================
--- 筋トレ記録アプリ テーブル定義
+-- 筋トレ記録アプリ スキーマ
 --
 -- 使い方:
---   Supabase ダッシュボード → 左メニュー SQL Editor → New query
+--   Supabase ダッシュボード → SQL Editor → New query
 --   このファイルの中身を全部貼り付けて Run
---   （何度実行しても壊れないように書いてあります）
+--
+-- 新規プロジェクトでも、既存プロジェクト（2025年に作ったもの）でも
+-- そのまま実行できる。何度実行しても壊れない。
+-- 既存データは消さない。
 -- ============================================================
 
--- ジムでのトレーニング記録（1日1件）
+-- ------------------------------------------------------------
+-- 1. テーブル（無ければ作る）
+-- ------------------------------------------------------------
+
 create table if not exists public.workouts (
-  date       date primary key,
-  menu_id    text not null,
-  updated_at timestamptz not null default now()
+  id      uuid primary key default gen_random_uuid(),
+  date    date not null,
+  menu_id text not null
 );
 
--- ジム外アクティビティ（スクワット等・1日に複数件）
--- client_id はアプリ側で採番するID。これを主キーにすることで
--- 「同じ記録を二重に入れない」「消えた記録だけを消す」が成立する。
 create table if not exists public.squat_records (
-  client_id  text primary key,
-  date       date not null,
-  reps       integer not null default 0,
-  sets       integer not null default 0,
-  created_at timestamptz not null default now()
+  id   uuid primary key default gen_random_uuid(),
+  date date not null,
+  reps integer not null default 0,
+  sets integer not null default 0
 );
-create index if not exists squat_records_date_idx on public.squat_records (date);
 
--- ジムの予約日
 create table if not exists public.reservations (
-  date       date primary key,
-  created_at timestamptz not null default now()
+  id   uuid primary key default gen_random_uuid(),
+  date date not null
 );
 
--- メニュー設定（A/B/C/D）
 create table if not exists public.menus (
   id           text primary key,
   title        text,
@@ -41,11 +40,9 @@ create table if not exists public.menus (
   text_color   text,
   bg_color     text,
   items        jsonb not null default '[]'::jsonb,
-  is_active    boolean not null default true,
-  updated_at   timestamptz not null default now()
+  is_active    boolean not null default true
 );
 
--- ジム外メニューの設定（1行のみ・id は常に 1）
 create table if not exists public.squat_settings (
   id              integer primary key,
   name            text,
@@ -53,18 +50,69 @@ create table if not exists public.squat_settings (
   default_sets    integer,
   unit            text,
   count_condition text,
-  condition_value integer,
-  updated_at      timestamptz not null default now()
+  condition_value integer
 );
 
--- ============================================================
--- RLS（アクセス制御）
+-- ------------------------------------------------------------
+-- 2. 列の追加（既存テーブルに足りないものを補う）
+--    アプリは updated_at / created_at を書きに行くので必須
+-- ------------------------------------------------------------
+
+alter table public.workouts       add column if not exists updated_at timestamptz not null default now();
+alter table public.workouts       add column if not exists created_at timestamptz not null default now();
+alter table public.squat_records  add column if not exists created_at timestamptz not null default now();
+alter table public.reservations   add column if not exists created_at timestamptz not null default now();
+alter table public.menus          add column if not exists updated_at timestamptz not null default now();
+alter table public.menus          add column if not exists items jsonb not null default '[]'::jsonb;
+alter table public.menus          add column if not exists is_active boolean not null default true;
+alter table public.squat_settings add column if not exists updated_at timestamptz not null default now();
+
+-- ------------------------------------------------------------
+-- 3. client_id を text の完全UNIQUEにする
 --
--- このアプリはログイン無しで使う個人用アプリなので、
--- 公開キー（anon）に読み書きを許可する。
--- ＝ URLと公開キーを知っている人は誰でも読み書きできる。
--- 気になる場合はログイン方式に変えられるので相談してください。
--- ============================================================
+--    旧: client_id bigint ＋ 部分UNIQUE索引（WHERE client_id IS NOT NULL）
+--    部分索引は ON CONFLICT の対象にできず、upsert が失敗する。
+--    アプリ側のIDは文字列で扱うので text に統一する。
+-- ------------------------------------------------------------
+
+alter table public.squat_records add column if not exists client_id text;
+
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'squat_records'
+      and column_name = 'client_id' and data_type <> 'text'
+  ) then
+    alter table public.squat_records alter column client_id type text using client_id::text;
+  end if;
+end $$;
+
+-- 既存行で client_id が空のものを埋める（消さずに残すため）
+update public.squat_records set client_id = id::text where client_id is null;
+
+alter table public.squat_records alter column client_id set not null;
+
+-- 部分索引を捨てて、条件なしのUNIQUEを張り直す
+drop index if exists public.squat_records_client_id_key;
+create unique index if not exists squat_records_client_id_uniq
+  on public.squat_records (client_id);
+
+-- ------------------------------------------------------------
+-- 4. upsert の衝突先になるUNIQUE（date）
+-- ------------------------------------------------------------
+
+create unique index if not exists workouts_date_key     on public.workouts (date);
+create unique index if not exists reservations_date_key on public.reservations (date);
+create index        if not exists squat_records_date_idx on public.squat_records (date);
+
+-- ------------------------------------------------------------
+-- 5. RLS（アクセス制御）
+--
+--    ログイン無しで使う個人用アプリなので、公開キー(anon)に読み書きを許可する。
+--    ＝ URLと公開キーを知っている人は誰でも読み書きできる。
+--    ログイン方式にしたくなったらここを変える。
+-- ------------------------------------------------------------
 
 alter table public.workouts       enable row level security;
 alter table public.squat_records  enable row level security;
@@ -86,9 +134,10 @@ begin
   end loop;
 end $$;
 
--- ============================================================
--- 初期データ（ジム外メニュー設定の1行）
--- ============================================================
+-- ------------------------------------------------------------
+-- 6. 初期データ（ジム外メニュー設定の1行）
+-- ------------------------------------------------------------
+
 insert into public.squat_settings (id, name, default_reps, default_sets, unit, count_condition, condition_value)
 values (1, '自重スクワット', 30, 1, '回', 'conditional', 100)
 on conflict (id) do nothing;

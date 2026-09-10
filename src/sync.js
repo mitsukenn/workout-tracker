@@ -83,7 +83,8 @@ export async function loadAllFromSupabase() {
         supabase.from('workouts').select('*'),
         supabase.from('squat_records').select('*').order('date', { ascending: true }),
         supabase.from('reservations').select('*'),
-        supabase.from('menus').select('*'),
+        // 並び順を固定しないと A/B/C/D の表示順がクラウドの返却順に振り回される
+        supabase.from('menus').select('*').order('id', { ascending: true }),
         supabase.from('squat_settings').select('*').eq('id', 1).maybeSingle(),
       ]),
       'クラウド読み込み'

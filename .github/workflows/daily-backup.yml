@@ -22,9 +22,11 @@ jobs:
         run: npm ci
 
       # 毎日アクセスすることで、Supabase無料枠の自動停止を防ぐ
+      # SUPABASE_SERVICE_ROLE_KEY は任意。無ければ公開キーで動く。
       - name: Backup all tables
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: node scripts/backup.mjs
 

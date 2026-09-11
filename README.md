@@ -47,13 +47,18 @@ localStorage は iOS が7日程度で勝手に消すため、単体では保管�
 4. ローカル用：`.env.example` を `.env.local` にコピーして貼り付ける
 5. **公開版用：GitHub の Settings → Secrets and variables → Actions に登録する**
 
-| Secret 名 | 用途 |
-|---|---|
-| `VITE_SUPABASE_URL` | 公開版のビルドに埋め込む接続先 |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | 公開版のビルドに埋め込む公開キー |
-| `SUPABASE_URL` | 毎日のバックアップ・週次LINE通知用 |
-| `SUPABASE_SERVICE_ROLE_KEY` | 同上（Project Settings → API の service_role） |
-| `LINE_CHANNEL_ACCESS_TOKEN` / `LINE_USER_ID` | 週次LINE通知用 |
+| Secret 名 | 必須 | 用途 |
+|---|---|---|
+| `VITE_SUPABASE_URL` | ● | 公開版のビルドに埋め込む接続先 |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | ● | 公開版のビルドに埋め込む公開キー |
+| `SUPABASE_URL` | ● | 毎日のバックアップ・キープアライブ用 |
+| `SUPABASE_PUBLISHABLE_KEY` | ● | 同上（公開キーで足りる） |
+| `SUPABASE_SERVICE_ROLE_KEY` | 任意 | 設定すればバックアップがRLSを迂回する |
+| `LINE_CHANNEL_ACCESS_TOKEN` / `LINE_USER_ID` | 任意 | 週次LINE通知を使う場合のみ |
+
+必須の4つはすべて「公開してよい値」なので、秘密鍵をGitHubに置かずに運用できる。
+（publishable key は Supabase 自身が "safely shared publicly" と明記しているもの。
+　ブラウザに配るバンドルにも埋め込まれる。防御はRLSで行う）
 
 5番を忘れると、**公開版だけがクラウド保存なしになって記録が消えます**。
 これを防ぐため、ビルド時に Secrets の有無とバンドルへの埋め込みを検証し、

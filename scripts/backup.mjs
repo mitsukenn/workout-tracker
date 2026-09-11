@@ -10,12 +10,23 @@ import { createClient } from '@supabase/supabase-js';
 import { mkdir, writeFile } from 'node:fs/promises';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// service_role があればそれを使うが、無ければ公開キーで動く。
+// 現在のRLSは anon に全テーブルの読み取りを許可しているのでこれで足りる。
+// 秘密鍵をGitHubに置かずにバックアップとキープアライブを回せるようにするため。
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('❌ SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が未設定です');
+  console.error('❌ SUPABASE_URL と、SUPABASE_SERVICE_ROLE_KEY または SUPABASE_PUBLISHABLE_KEY が必要です');
   process.exit(1);
 }
+
+console.log(
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? '🔑 service_role キーで接続します'
+    : '🔑 公開キーで接続します'
+);
 
 const TABLES = ['workouts', 'squat_records', 'reservations', 'menus', 'squat_settings'];
 

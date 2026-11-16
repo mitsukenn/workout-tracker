@@ -874,8 +874,8 @@ export default function App() {
     const totalScore = activeDays + bonusPoints;
 
     return (
-      <div ref={calendarRef} className="calendar-container bg-white rounded-2xl shadow-sm p-3 mb-2 relative z-0">
-        <div className="flex justify-between items-center mb-2">
+      <div ref={calendarRef} className="calendar-container bg-white rounded-2xl shadow-sm p-4 mb-2 relative z-0">
+        <div className="flex justify-between items-center mb-3">
           <button onClick={() => changeMonth(-1)} className="p-1 hover:bg-gray-100 rounded-full" data-html2canvas-ignore><ChevronLeft size={18} className="text-gray-400" /></button>
           <div className="flex-1 flex justify-between items-center px-2">
             <h2 className="font-bold text-base text-gray-800 tracking-tight">{yearMonth}</h2>
@@ -886,15 +886,15 @@ export default function App() {
           <button onClick={() => changeMonth(1)} className="p-1 hover:bg-gray-100 rounded-full" data-html2canvas-ignore><ChevronRight size={18} className="text-gray-400" /></button>
         </div>
 
-        <div className="grid grid-cols-7 mb-1">
+        <div className="grid grid-cols-7 mb-2">
           {['日', '月', '火', '水', '木', '金', '土'].map((d, i) => (
-            <div key={i} className={`text-[10px] font-bold text-center ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-400'}`}>{d}</div>
+            <div key={i} className={`text-[11px] font-bold text-center ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-400'}`}>{d}</div>
           ))}
         </div>
 
-        <div className="grid grid-cols-7 gap-y-0.5 gap-x-0.5">
+        <div className="grid grid-cols-7 gap-y-1 gap-x-0.5">
           {days.map((day, idx) => {
-            if (!day) return <div key={`empty-${idx}`} className="h-9"></div>;
+            if (!day) return <div key={`empty-${idx}`} className="h-10"></div>;
 
             const dateStr = formatDateString(day);
             const recordId = history[dateStr];
@@ -929,13 +929,13 @@ export default function App() {
               <div
                 key={dateStr}
                 onClick={() => { setEditingDate(day); setIsModalOpen(true); }}
-                className={`relative h-9 flex flex-col items-center justify-center rounded-lg cursor-pointer transition-all ${isReserved ? 'hover:bg-yellow-100' : 'hover:bg-gray-50'}`}
+                className={`relative h-10 flex flex-col items-center justify-center rounded-lg cursor-pointer transition-all ${isReserved ? 'hover:bg-yellow-100' : 'hover:bg-gray-50'}`}
               >
                 <div className={`absolute inset-x-1 inset-y-0.5 rounded-full flex items-center justify-center ${bgClass} ${borderClass}`}>
                   {Content}
                 </div>
                 {/* 日付数字：下線処理を追加 */}
-                <span className={`relative z-10 text-xs font-medium leading-none ${textClass} ${squatDecoration} ${isToday ? 'underline decoration-2 decoration-gray-400 underline-offset-4' : ''}`}>
+                <span className={`relative z-10 text-sm font-medium leading-none ${textClass} ${squatDecoration} ${isToday ? 'underline decoration-2 decoration-gray-400 underline-offset-4' : ''}`}>
                   {day.getDate()}
                 </span>
                 {isReserved && !menu && !isSquatDone && (
@@ -946,7 +946,7 @@ export default function App() {
           })}
         </div>
 
-        <div className="mt-2 flex justify-center items-center gap-3 flex-wrap text-[9px] text-gray-400">
+        <div className="mt-3 flex justify-center items-center gap-3 flex-wrap text-[10px] text-gray-400">
           {Object.values(menus).filter(m => m.isActive).map(m => (
             <div key={m.id} className="flex items-center gap-1.5">
               <div className={`w-2.5 h-2.5 rounded-full ${m.color.replace('bg-', 'bg-').replace('500', '200')}`}></div>
@@ -987,7 +987,7 @@ export default function App() {
 
           {/* ジム外メニュー（スクワット）入力エリア */}
           <div className="mb-6 p-4 bg-gray-50 rounded-2xl border border-gray-100">
-            <div className="flex justify-between items-center mb-2">
+            <div className="flex justify-between items-center mb-3">
               <span className="text-sm text-gray-500 font-bold">{squatSettings.name}</span>
               <span className="text-xl font-black text-gray-800">{getDailySquatTotal(formatDateString(editingDate))}<span className="text-sm font-normal text-gray-400 ml-1">{squatSettings.unit}</span></span>
             </div>
@@ -1281,30 +1281,34 @@ export default function App() {
   const isTodaySquatDone = todaySquat > 0; // 1回でもやればDone
 
   return (
-    <div className="min-h-screen bg-gray-50 px-4 pt-2 pb-3 font-sans max-w-md mx-auto">
-      {/* Header：スマホ1画面に収めるため1行にまとめる */}
-      <header className="mb-3 flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[9px] font-bold text-yellow-500 tracking-[0.2em] leading-none">CHOCOZAP</p>
-          <h1 className="text-xl font-black text-gray-800 leading-tight">筋トレ記録</h1>
+    <div className="min-h-screen bg-gray-50 px-4 pt-4 pb-3 font-sans max-w-md mx-auto">
+      {/* Header：1行に詰め込むと窮屈なので、名前と状態で2段に分ける */}
+      <header className="mb-4">
+        <div className="flex items-end justify-between mb-2.5">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold text-yellow-500 tracking-[0.2em] leading-none mb-1.5">CHOCOZAP</p>
+            <h1 className="text-2xl font-black text-gray-800 leading-none">筋トレ記録</h1>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-baseline gap-0.5">
+              <span className={`text-3xl font-black italic ${paceData.rankColor} leading-none`}>{paceData.rank}</span>
+              <span className="text-[10px] font-bold text-gray-400">rank</span>
+            </div>
+            <button onClick={() => setCurrentView('settings')} className="text-gray-300 hover:text-gray-500"><Settings size={20} /></button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center justify-between gap-2">
           <button
             onClick={() => setCurrentView('settings')}
-            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${syncLabel.cls}`}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${syncLabel.cls}`}
             title={syncStatus.detail}
           >
             {syncLabel.text}
           </button>
-          <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${paceData.colorClass}`} title={`先月実績: ${lastMonthPace}`}>
+          <div className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${paceData.colorClass}`} title={`先月実績: ${lastMonthPace}`}>
             今月予測 {paceData.pace}回
           </div>
-          <div className="flex items-baseline gap-0.5">
-            <span className={`text-2xl font-black italic ${paceData.rankColor} leading-none`}>{paceData.rank}</span>
-            <span className="text-[9px] font-bold text-gray-400">rank</span>
-          </div>
-          <button onClick={() => setCurrentView('settings')} className="text-gray-300 hover:text-gray-500"><Settings size={18} /></button>
         </div>
       </header>
 
@@ -1333,30 +1337,34 @@ export default function App() {
         </div>
       )}
 
-      <div className="mb-3 space-y-3">
-        {todayRecord && (() => {
+      <div className="mb-3 space-y-4">
+        {/* 今日やったこと。カードを分けると縦に伸びて1画面を超えるので1枚にまとめる */}
+        {(todayRecord || isTodaySquatDone) && (() => {
           const colorMap = {
             A: { border: 'border-red-400', text: 'text-red-600', bg: 'bg-red-50' },
             B: { border: 'border-blue-400', text: 'text-blue-600', bg: 'bg-blue-50' },
             C: { border: 'border-yellow-400', text: 'text-yellow-600', bg: 'bg-yellow-50' },
             D: { border: 'border-orange-400', text: 'text-orange-600', bg: 'bg-orange-50' }
           };
-          const colors = colorMap[todayRecord] || { border: 'border-gray-400', text: 'text-gray-600', bg: 'bg-gray-50' };
+          const colors = colorMap[todayRecord] || { border: 'border-green-400', text: 'text-green-600', bg: 'bg-green-50' };
           return (
-            <div className={`relative overflow-hidden ${colors.bg} border-l-4 ${colors.border} rounded-2xl p-3 flex items-center gap-3 shadow-sm`}>
-              <img src="./celebration.png" alt="" className="absolute right-0 top-0 h-full w-24 object-cover opacity-60" />
-              <div className={`${colors.bg} p-1.5 rounded-full z-10 border ${colors.border}`}><Check size={18} className={colors.text} /></div>
-              <div className="z-10"><p className={`font-bold text-sm leading-tight ${colors.text}`}>メニュー{menus[todayRecord]?.title.replace('メニュー ', '')} 完了！</p><p className="text-gray-500 text-xs">Nice workout!</p></div>
+            <div className={`relative overflow-hidden bg-white border-l-4 ${colors.border} rounded-2xl p-3 shadow-sm space-y-1.5`}>
+              <img src="./celebration.png" alt="" className="absolute right-0 top-0 h-full w-24 object-cover opacity-40" />
+              {todayRecord && (
+                <div className="relative z-10 flex items-center gap-2">
+                  <Check size={16} className={colors.text} />
+                  <span className={`font-bold text-sm leading-tight ${colors.text}`}>{menus[todayRecord]?.title} 完了！</span>
+                </div>
+              )}
+              {isTodaySquatDone && (
+                <div className="relative z-10 flex items-center gap-2">
+                  <Activity size={16} className="text-green-600" />
+                  <span className="font-bold text-sm leading-tight text-green-700">{squatSettings.name} {todaySquat}{squatSettings.unit}</span>
+                </div>
+              )}
             </div>
           );
         })()}
-        {isTodaySquatDone && (
-          <div className="relative overflow-hidden bg-green-50 border-l-4 border-green-400 rounded-2xl p-3 flex items-center gap-3 shadow-sm">
-            <img src="./squat.png" alt="" className="absolute right-0 top-0 h-full w-24 object-cover opacity-60" />
-            <div className="bg-green-50 p-1.5 rounded-full z-10 border border-green-400"><Activity size={18} className="text-green-600" /></div>
-            <div className="z-10"><p className="font-bold text-sm leading-tight text-green-700">{squatSettings.name} {todaySquat}{squatSettings.unit}</p><p className="text-gray-500 text-xs">ナイス貯筋！</p></div>
-          </div>
-        )}
 
         {!todayRecord && (() => {
           const activeMenus = Object.values(menus).filter(m => m.isActive);
@@ -1370,7 +1378,7 @@ export default function App() {
               {/* 有効なメニューが1つなら横長1枚。選択肢が少ないほど迷わない */}
               <div className={`grid gap-3 ${activeMenus.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
                 {activeMenus.map(menu => (
-                  <button key={menu.id} onClick={() => startWorkout(menu.id)} className={`relative overflow-hidden bg-white p-3 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all group text-left border-l-4 ${menu.borderColor}`}>
+                  <button key={menu.id} onClick={() => startWorkout(menu.id)} className={`relative overflow-hidden bg-white p-4 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all group text-left border-l-4 ${menu.borderColor}`}>
                     <img src={`./menu_${menu.id.toLowerCase()}.png`} alt="" className="absolute -right-1 -top-1 w-14 h-14 object-cover opacity-40 rounded-xl" />
                     <span className={`block ${menu.textColor} font-black text-base leading-tight relative z-10`}>{menu.title}</span>
                     <span className="block text-gray-500 font-medium text-[11px] relative z-10 line-clamp-1 mt-0.5">{menu.items.map(i => i.name).join(' & ')}</span>
@@ -1381,8 +1389,8 @@ export default function App() {
           );
         })()}
 
-        <div className="pt-2 border-t border-gray-100 space-y-2">
-          <button onClick={() => setCurrentView('squat')} className="relative overflow-hidden w-full bg-white border border-green-100 p-3 rounded-2xl shadow-sm flex items-center justify-between group hover:border-green-300 transition-all">
+        <div className="pt-3 border-t border-gray-100 space-y-3">
+          <button onClick={() => setCurrentView('squat')} className="relative overflow-hidden w-full bg-white border border-green-100 p-4 rounded-2xl shadow-sm flex items-center justify-between group hover:border-green-300 transition-all">
             <img src="./squat.png" alt="" className="absolute right-0 top-0 h-full w-24 object-cover opacity-60" />
             <div className="flex items-center gap-3 z-10">
               <div className="bg-green-100 p-2 rounded-xl text-green-600"><Zap size={18} /></div>
@@ -1399,7 +1407,7 @@ export default function App() {
             {OFFICE_MOVES.map(m => {
               const count = getOfficeCount(todayStr, m.kind);
               return (
-                <div key={m.kind} className={`rounded-2xl border p-2.5 ${count > 0 ? 'bg-sky-50 border-sky-200' : 'bg-white border-gray-100'}`}>
+                <div key={m.kind} className={`rounded-2xl border p-3 ${count > 0 ? 'bg-sky-50 border-sky-200' : 'bg-white border-gray-100'}`}>
                   <button
                     onClick={() => addOfficeMove(m.kind)}
                     className="w-full flex items-center gap-2 text-left active:scale-95 transition-transform"

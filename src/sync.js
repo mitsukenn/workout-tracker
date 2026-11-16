@@ -78,7 +78,7 @@ export async function loadAllFromSupabase() {
   report('loading');
 
   try {
-    const [workoutsRes, squatsRes, reservationsRes, menusRes, settingsRes] = await withTimeout(
+    const [workoutsRes, squatsRes, reservationsRes, menusRes, settingsRes, officeRes] = await withTimeout(
       Promise.all([
         supabase.from('workouts').select('*'),
         supabase.from('squat_records').select('*').order('date', { ascending: true }),
@@ -86,6 +86,9 @@ export async function loadAllFromSupabase() {
         // 並び順を固定しないと A/B/C/D の表示順がクラウドの返却順に振り回される
         supabase.from('menus').select('*').order('id', { ascending: true }),
         supabase.from('squat_settings').select('*').eq('id', 1).maybeSingle(),
+        // オフィスでの1分（肩回し・背伸び）。同じ読み込みに入れることで
+        // 「読み込みが終わるまで書かない」ガードがこの記録にもかかる。
+        supabase.from('office_moves').select('*').order('date', { ascending: true }),
       ]),
       'クラウド読み込み'
     );
@@ -95,6 +98,7 @@ export async function loadAllFromSupabase() {
     const reservationRows = unwrap(reservationsRes, 'reservations');
     const menuRows = unwrap(menusRes, 'menus');
     const settingsRow = unwrap(settingsRes, 'squat_settings');
+    const officeRows = unwrap(officeRes, 'office_moves');
 
     // workouts → { "2024-01-01": "A" }
     const history = {};
@@ -111,6 +115,13 @@ export async function loadAllFromSupabase() {
         reps: row.reps,
         sets: row.sets,
       });
+    });
+
+    // office_moves → { "2024-01-01": [{id, kind}, ...] }
+    const officeMoves = {};
+    (officeRows || []).forEach(row => {
+      if (!officeMoves[row.date]) officeMoves[row.date] = [];
+      officeMoves[row.date].push({ id: row.client_id, kind: row.kind });
     });
 
     // reservations → { "2024-01-01": true }
@@ -154,10 +165,12 @@ export async function loadAllFromSupabase() {
         reservations,
         menus,
         squatSettings,
+        officeMoves,
         isEmpty:
           Object.keys(history).length === 0 &&
           Object.keys(squatHistory).length === 0 &&
           Object.keys(reservations).length === 0 &&
+          Object.keys(officeMoves).length === 0 &&
           Object.keys(menus).length === 0,
       },
     };
@@ -265,6 +278,24 @@ export async function syncSquatHistory(squatHistory) {
     });
     await upsertAndPrune({
       table: 'squat_records',
+      keyColumn: 'client_id',
+      keepKeys: rows.map(r => r.client_id),
+      rows,
+    });
+  });
+}
+
+// オフィスでの1分（肩回し・背伸び）。スクワットと同じ upsert → 差分削除の道を通す。
+export async function syncOfficeMoves(officeMoves) {
+  await guardedWrite('syncOfficeMoves', async () => {
+    const rows = [];
+    Object.entries(officeMoves).forEach(([date, records]) => {
+      (records || []).forEach(r => {
+        rows.push({ client_id: String(r.id), date, kind: String(r.kind) });
+      });
+    });
+    await upsertAndPrune({
+      table: 'office_moves',
       keyColumn: 'client_id',
       keepKeys: rows.map(r => r.client_id),
       rows,

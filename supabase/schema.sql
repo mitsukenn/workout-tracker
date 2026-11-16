@@ -141,3 +141,35 @@ end $$;
 insert into public.squat_settings (id, name, default_reps, default_sets, unit, count_condition, condition_value)
 values (1, '自重スクワット', 30, 1, '回', 'conditional', 100)
 on conflict (id) do nothing;
+
+-- ------------------------------------------------------------
+-- 7. オフィスでの1分（肩回し・背伸び）
+--
+--    スクワットとは別テーブルにする。理由は3つ。
+--      ・貯筋・ボーナス・ランク判定に混ぜない（別の目的の記録のため）
+--      ・squat_records の形（回×セット）に合わない。こちらは「やった」の1タップ
+--      ・古いコードが動いている端末からは見えないので、事故が起きない
+--
+--    何度実行しても壊れない。既存データは消さない。
+-- ------------------------------------------------------------
+
+create table if not exists public.office_moves (
+  id         uuid primary key default gen_random_uuid(),
+  date       date not null,
+  kind       text not null,                 -- 'shoulder'（肩回し） / 'stretch'（背伸び）
+  client_id  text,
+  created_at timestamptz not null default now()
+);
+
+-- client_id は upsert の衝突先。squat_records と同じ作りにそろえる
+update public.office_moves set client_id = id::text where client_id is null;
+alter table public.office_moves alter column client_id set not null;
+
+create unique index if not exists office_moves_client_id_uniq on public.office_moves (client_id);
+create index        if not exists office_moves_date_idx       on public.office_moves (date);
+
+alter table public.office_moves enable row level security;
+
+drop policy if exists anon_all on public.office_moves;
+create policy anon_all on public.office_moves
+  for all to anon, authenticated using (true) with check (true);

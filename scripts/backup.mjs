@@ -28,7 +28,7 @@ console.log(
     : '🔑 公開キーで接続します'
 );
 
-const TABLES = ['workouts', 'squat_records', 'reservations', 'menus', 'squat_settings'];
+const TABLES = ['workouts', 'squat_records', 'reservations', 'menus', 'squat_settings', 'office_moves'];
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false },

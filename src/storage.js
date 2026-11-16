@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   reservations: 'workoutReservations',
   menus: 'workoutMenus',
   squatSettings: 'workoutSquatSettings',
+  officeMoves: 'workoutOfficeMoves',
 };
 
 // プライベートブラウズや容量超過で throw するので必ず包む
@@ -47,6 +48,7 @@ export function buildBackup(state) {
     reservations: state.reservations || {},
     menus: state.menus || {},
     squatSettings: state.squatSettings || null,
+    officeMoves: state.officeMoves || {},
   };
 }
 
@@ -80,7 +82,16 @@ export function applyBackup(backup, current) {
     mergedSquat[date] = [...existing, ...added];
   });
 
+  const mergedOffice = { ...(current.officeMoves || {}) };
+  Object.entries(backup.officeMoves || {}).forEach(([date, records]) => {
+    const existing = mergedOffice[date] || [];
+    const existingIds = new Set(existing.map(r => String(r.id)));
+    const added = (records || []).filter(r => !existingIds.has(String(r.id)));
+    mergedOffice[date] = [...existing, ...added];
+  });
+
   return {
+    officeMoves: mergedOffice,
     history: { ...(backup.history || {}), ...(current.history || {}) },
     squatHistory: mergedSquat,
     reservations: { ...(backup.reservations || {}), ...(current.reservations || {}) },

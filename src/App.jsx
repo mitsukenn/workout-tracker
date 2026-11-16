@@ -7,7 +7,7 @@ import {
 import { isSupabaseEnabled, supabaseDisabledReason } from './supabase';
 import {
   loadAllFromSupabase,
-  syncHistory, syncSquatHistory, syncReservations, syncMenus, syncSquatSettings,
+  syncHistory, syncSquatHistory, syncReservations, syncMenus, syncSquatSettings, syncOfficeMoves,
   setWriteEnabled, onSyncStatus, debounce,
 } from './sync';
 import { safeGet, safeSet, applyBackup, downloadBackup } from './storage';
@@ -18,6 +18,44 @@ const debouncedSyncSquatHistory = debounce(syncSquatHistory, 1500);
 const debouncedSyncReservations = debounce(syncReservations, 1500);
 const debouncedSyncMenus = debounce(syncMenus, 1500);
 const debouncedSyncSquatSettings = debounce(syncSquatSettings, 1500);
+const debouncedSyncOfficeMoves = debounce(syncOfficeMoves, 1500);
+
+// オフィス用アイコン。lucideと同じ線の太さ・丸端でそろえて、絵文字の浮いた感じを避ける。
+const IconProps = {
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+};
+
+// 肩回し：回す動きそのものを大きく1本の弧で描く。
+// 20px では細かい人型はつぶれるので、形は少なく大きく。
+const ShoulderRollIcon = ({ size = 22, className = '' }) => (
+  <svg {...IconProps} width={size} height={size} className={className} aria-hidden="true">
+    <path d="M20 12a8 8 0 1 1-2.4-5.7" />
+    <path d="M20 3.5V9h-5.5" />
+  </svg>
+);
+
+// 背伸び：両腕を頭の上へ。脚は割らない（割るとX字になって砂時計に見える）
+const StretchIcon = ({ size = 22, className = '' }) => (
+  <svg {...IconProps} width={size} height={size} className={className} aria-hidden="true">
+    <circle cx="12" cy="7" r="2.2" />
+    <path d="M12 9.2v6.6" />
+    <path d="M12 11.4 6.2 4.6" />
+    <path d="M12 11.4 17.8 4.6" />
+    <path d="M12 15.8 10.3 21" />
+    <path d="M12 15.8 13.7 21" />
+  </svg>
+);
+
+// オフィスでの1分。回数やセット数は入れない。押すだけ。
+const OFFICE_MOVES = [
+  { kind: 'shoulder', label: '肩回し', hint: '肩を後ろに5回', Icon: ShoulderRollIcon },
+  { kind: 'stretch', label: '背伸び', hint: '胸を開いて20秒', Icon: StretchIcon },
+];
 
 // html2canvasをCDNから読み込む関数
 const loadHtml2Canvas = () => {
@@ -324,6 +362,7 @@ function SettingsView({
 export default function App() {
   const [history, setHistory] = useState({});
   const [squatHistory, setSquatHistory] = useState({});
+  const [officeMoves, setOfficeMoves] = useState({});
   const [reservations, setReservations] = useState({});
   // メニューデータをStateで管理
   const [menus, setMenus] = useState(DEFAULT_MENUS);
@@ -385,11 +424,13 @@ export default function App() {
     const loadLocal = () => {
       const savedHistory = safeGet('workoutHistory');
       const savedSquatHistory = safeGet('workoutSquatHistory');
+      const savedOfficeMoves = safeGet('workoutOfficeMoves');
       const savedReservations = safeGet('workoutReservations');
       const savedMenus = safeGet('workoutMenus');
       const savedSquatSettings = safeGet('workoutSquatSettings');
       if (savedHistory) setHistory(savedHistory);
       if (savedSquatHistory) setSquatHistory(savedSquatHistory);
+      if (savedOfficeMoves) setOfficeMoves(savedOfficeMoves);
       if (savedReservations) setReservations(savedReservations);
       if (savedMenus) setMenus(savedMenus);
       if (savedSquatSettings) applySettings(savedSquatSettings);
@@ -426,6 +467,7 @@ export default function App() {
         // クラウドが正（複数端末で使うため）
         setHistory(remote.data.history);
         setSquatHistory(remote.data.squatHistory);
+        setOfficeMoves(remote.data.officeMoves || {});
         setReservations(remote.data.reservations);
         if (Object.keys(remote.data.menus).length > 0) setMenus(remote.data.menus);
         if (remote.data.squatSettings) applySettings(remote.data.squatSettings);
@@ -442,6 +484,7 @@ export default function App() {
   // localStorage への保存（オフライン用キャッシュ・即時）
   useEffect(() => { safeSet('workoutHistory', history); }, [history]);
   useEffect(() => { safeSet('workoutSquatHistory', squatHistory); }, [squatHistory]);
+  useEffect(() => { safeSet('workoutOfficeMoves', officeMoves); }, [officeMoves]);
   useEffect(() => { safeSet('workoutReservations', reservations); }, [reservations]);
   useEffect(() => { safeSet('workoutMenus', menus); }, [menus]);
   useEffect(() => { safeSet('workoutSquatSettings', squatSettings); }, [squatSettings]);
@@ -449,6 +492,7 @@ export default function App() {
   // Supabaseへのデバウンス同期（初回ロード完了後のみ・sync.js側でも二重にガード）
   useEffect(() => { if (isLoaded) debouncedSyncHistory(history); }, [history, isLoaded]);
   useEffect(() => { if (isLoaded) debouncedSyncSquatHistory(squatHistory); }, [squatHistory, isLoaded]);
+  useEffect(() => { if (isLoaded) debouncedSyncOfficeMoves(officeMoves); }, [officeMoves, isLoaded]);
   useEffect(() => { if (isLoaded) debouncedSyncReservations(reservations); }, [reservations, isLoaded]);
   useEffect(() => { if (isLoaded) debouncedSyncMenus(menus); }, [menus, isLoaded]);
   useEffect(() => { if (isLoaded) debouncedSyncSquatSettings(squatSettings); }, [squatSettings, isLoaded]);
@@ -465,7 +509,7 @@ export default function App() {
   const isSyncWarning = syncStatus.state === 'error' || syncStatus.state === 'local-only';
 
   // バックアップ操作
-  const currentDataSnapshot = () => ({ history, squatHistory, reservations, menus, squatSettings });
+  const currentDataSnapshot = () => ({ history, squatHistory, reservations, menus, squatSettings, officeMoves });
 
   const exportBackup = () => {
     downloadBackup(currentDataSnapshot());
@@ -478,6 +522,7 @@ export default function App() {
         const merged = applyBackup(JSON.parse(reader.result), currentDataSnapshot());
         setHistory(merged.history);
         setSquatHistory(merged.squatHistory);
+        setOfficeMoves(merged.officeMoves || {});
         setReservations(merged.reservations);
         setMenus(merged.menus);
         if (merged.squatSettings) setSquatSettings(merged.squatSettings);
@@ -505,6 +550,32 @@ export default function App() {
   const getDailySquatTotal = (dateStr) => {
     const records = squatHistory[dateStr] || [];
     return records.reduce((total, record) => total + (record.reps * record.sets), 0);
+  };
+
+  // オフィスでの1分：その日に何回押したか
+  const getOfficeCount = (dateStr, kind) =>
+    (officeMoves[dateStr] || []).filter(r => r.kind === kind).length;
+
+  // 押すだけ。回数もセット数も聞かない（入力の手間があると続かないため）
+  const addOfficeMove = (kind) => {
+    const dateStr = getTodayString();
+    const record = { id: String(Date.now()) + '-' + kind, kind };
+    setOfficeMoves(prev => ({ ...prev, [dateStr]: [...(prev[dateStr] || []), record] }));
+  };
+
+  // 押し間違いを1タップで戻せるようにする（その日の最後の1件を消す）
+  const undoOfficeMove = (kind) => {
+    const dateStr = getTodayString();
+    setOfficeMoves(prev => {
+      const list = prev[dateStr] || [];
+      let lastIndex = -1;
+      list.forEach((r, i) => { if (r.kind === kind) lastIndex = i; });
+      if (lastIndex === -1) return prev;
+      const next = list.filter((_, i) => i !== lastIndex);
+      const copy = { ...prev };
+      if (next.length === 0) delete copy[dateStr]; else copy[dateStr] = next;
+      return copy;
+    });
   };
 
   // ペース計算（新ロジック：月間予測）
@@ -803,27 +874,27 @@ export default function App() {
     const totalScore = activeDays + bonusPoints;
 
     return (
-      <div ref={calendarRef} className="calendar-container bg-white rounded-2xl shadow-sm p-5 mb-6 relative z-0">
-        <div className="flex justify-between items-center mb-6">
-          <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-gray-100 rounded-full" data-html2canvas-ignore><ChevronLeft size={20} className="text-gray-400" /></button>
+      <div ref={calendarRef} className="calendar-container bg-white rounded-2xl shadow-sm p-3 mb-2 relative z-0">
+        <div className="flex justify-between items-center mb-2">
+          <button onClick={() => changeMonth(-1)} className="p-1 hover:bg-gray-100 rounded-full" data-html2canvas-ignore><ChevronLeft size={18} className="text-gray-400" /></button>
           <div className="flex-1 flex justify-between items-center px-2">
-            <h2 className="font-bold text-xl text-gray-800 tracking-tight">{yearMonth}</h2>
-            <div className="text-xs font-medium text-gray-400 bg-gray-50 px-2 py-1 rounded">
-              実績: <span className="text-gray-700 font-bold text-sm">{activeDays}+{bonusPoints}</span> 回
+            <h2 className="font-bold text-base text-gray-800 tracking-tight">{yearMonth}</h2>
+            <div className="text-[10px] font-medium text-gray-400 bg-gray-50 px-2 py-0.5 rounded">
+              実績: <span className="text-gray-700 font-bold text-xs">{activeDays}+{bonusPoints}</span> 回
             </div>
           </div>
-          <button onClick={() => changeMonth(1)} className="p-2 hover:bg-gray-100 rounded-full" data-html2canvas-ignore><ChevronRight size={20} className="text-gray-400" /></button>
+          <button onClick={() => changeMonth(1)} className="p-1 hover:bg-gray-100 rounded-full" data-html2canvas-ignore><ChevronRight size={18} className="text-gray-400" /></button>
         </div>
 
-        <div className="grid grid-cols-7 gap-y-4 mb-2">
+        <div className="grid grid-cols-7 mb-1">
           {['日', '月', '火', '水', '木', '金', '土'].map((d, i) => (
-            <div key={i} className={`text-xs font-bold text-center ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-400'}`}>{d}</div>
+            <div key={i} className={`text-[10px] font-bold text-center ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-400'}`}>{d}</div>
           ))}
         </div>
 
-        <div className="grid grid-cols-7 gap-y-2 gap-x-1">
+        <div className="grid grid-cols-7 gap-y-0.5 gap-x-0.5">
           {days.map((day, idx) => {
-            if (!day) return <div key={`empty-${idx}`} className="aspect-square"></div>;
+            if (!day) return <div key={`empty-${idx}`} className="h-9"></div>;
 
             const dateStr = formatDateString(day);
             const recordId = history[dateStr];
@@ -858,24 +929,24 @@ export default function App() {
               <div
                 key={dateStr}
                 onClick={() => { setEditingDate(day); setIsModalOpen(true); }}
-                className={`relative aspect-square flex flex-col items-center justify-center rounded-xl cursor-pointer transition-all ${isReserved ? 'hover:bg-yellow-100' : 'hover:bg-gray-50'}`}
+                className={`relative h-9 flex flex-col items-center justify-center rounded-lg cursor-pointer transition-all ${isReserved ? 'hover:bg-yellow-100' : 'hover:bg-gray-50'}`}
               >
-                <div className={`absolute inset-1 rounded-full flex items-center justify-center ${bgClass} ${borderClass}`}>
+                <div className={`absolute inset-x-1 inset-y-0.5 rounded-full flex items-center justify-center ${bgClass} ${borderClass}`}>
                   {Content}
                 </div>
                 {/* 日付数字：下線処理を追加 */}
-                <span className={`relative z-10 text-sm font-medium leading-none ${textClass} ${squatDecoration} ${isToday ? 'underline decoration-2 decoration-gray-400 underline-offset-8' : ''}`}>
+                <span className={`relative z-10 text-xs font-medium leading-none ${textClass} ${squatDecoration} ${isToday ? 'underline decoration-2 decoration-gray-400 underline-offset-4' : ''}`}>
                   {day.getDate()}
                 </span>
                 {isReserved && !menu && !isSquatDone && (
-                  <div className="absolute bottom-1 z-10"><Clock size={10} className="text-yellow-500/70" /></div>
+                  <div className="absolute bottom-0 z-10"><Clock size={8} className="text-yellow-500/70" /></div>
                 )}
               </div>
             );
           })}
         </div>
 
-        <div className="mt-6 flex justify-center items-center gap-4 flex-wrap text-[10px] text-gray-400">
+        <div className="mt-2 flex justify-center items-center gap-3 flex-wrap text-[9px] text-gray-400">
           {Object.values(menus).filter(m => m.isActive).map(m => (
             <div key={m.id} className="flex items-center gap-1.5">
               <div className={`w-2.5 h-2.5 rounded-full ${m.color.replace('bg-', 'bg-').replace('500', '200')}`}></div>
@@ -889,7 +960,7 @@ export default function App() {
         <button
           onClick={handleShare}
           disabled={isSharing}
-          className="absolute -bottom-4 right-4 bg-indigo-600 text-white p-3 rounded-full shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:shadow-xl transition-all z-20 flex items-center justify-center active:scale-95"
+          className="absolute bottom-2 right-2 bg-indigo-600 text-white p-2 rounded-full shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-all z-20 flex items-center justify-center active:scale-95"
           data-html2canvas-ignore
         >
           {isSharing ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Share2 size={20} />}
@@ -1210,43 +1281,30 @@ export default function App() {
   const isTodaySquatDone = todaySquat > 0; // 1回でもやればDone
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 font-sans max-w-md mx-auto">
-      {/* Header */}
-      <header className="mb-8 pt-4 flex items-start justify-between">
-        <div>
-          <p className="text-[10px] font-bold text-yellow-500 tracking-[0.2em] mb-1">CHOCOZAP</p>
-          <h1 className="text-3xl font-black text-gray-800 leading-none">
-            筋トレ記録
-          </h1>
+    <div className="min-h-screen bg-gray-50 px-4 pt-2 pb-3 font-sans max-w-md mx-auto">
+      {/* Header：スマホ1画面に収めるため1行にまとめる */}
+      <header className="mb-3 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[9px] font-bold text-yellow-500 tracking-[0.2em] leading-none">CHOCOZAP</p>
+          <h1 className="text-xl font-black text-gray-800 leading-tight">筋トレ記録</h1>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setCurrentView('settings')}
-            className={`mt-2 px-2 py-0.5 rounded-full text-[10px] font-bold ${syncLabel.cls}`}
+            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${syncLabel.cls}`}
             title={syncStatus.detail}
           >
             {syncLabel.text}
           </button>
-        </div>
-
-        {/* Rank Badge Area */}
-        <div className="flex flex-col items-end">
-          <div className="flex items-center gap-4 mb-1">
-            <button onClick={() => setCurrentView('settings')} className="text-gray-300 hover:text-gray-500 p-1"><Settings size={20} /></button>
-            <div className="flex items-baseline gap-1">
-              <span className={`text-4xl font-black italic ${paceData.rankColor} drop-shadow-sm`}>{paceData.rank}</span>
-              <span className="text-xs font-bold text-gray-400">rank</span>
-            </div>
+          <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${paceData.colorClass}`} title={`先月実績: ${lastMonthPace}`}>
+            今月予測 {paceData.pace}回
           </div>
-
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex gap-2">
-              <div className="text-[10px] text-gray-400 font-medium text-right">
-                先月実績: <span className="font-bold text-gray-500">{lastMonthPace}</span>
-              </div>
-              <div className={`px-3 py-1 rounded text-[10px] font-bold ${paceData.colorClass}`}>
-                予測Rate: {paceData.pace}
-              </div>
-            </div>
+          <div className="flex items-baseline gap-0.5">
+            <span className={`text-2xl font-black italic ${paceData.rankColor} leading-none`}>{paceData.rank}</span>
+            <span className="text-[9px] font-bold text-gray-400">rank</span>
           </div>
+          <button onClick={() => setCurrentView('settings')} className="text-gray-300 hover:text-gray-500"><Settings size={18} /></button>
         </div>
       </header>
 
@@ -1275,7 +1333,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="mb-8 space-y-4">
+      <div className="mb-3 space-y-3">
         {todayRecord && (() => {
           const colorMap = {
             A: { border: 'border-red-400', text: 'text-red-600', bg: 'bg-red-50' },
@@ -1285,63 +1343,92 @@ export default function App() {
           };
           const colors = colorMap[todayRecord] || { border: 'border-gray-400', text: 'text-gray-600', bg: 'bg-gray-50' };
           return (
-            <div className={`relative overflow-hidden ${colors.bg} border-l-4 ${colors.border} rounded-2xl p-4 flex items-center gap-4 shadow-sm`}>
-              <img src="./celebration.png" alt="" className="absolute right-0 top-0 h-full w-28 object-cover opacity-60" />
-              <div className={`${colors.bg} p-2 rounded-full z-10 border ${colors.border}`}><Check size={24} className={colors.text} /></div>
-              <div className="z-10"><p className={`font-bold text-lg ${colors.text}`}>メニュー{menus[todayRecord]?.title.replace('メニュー ', '')} 完了！</p><p className="text-gray-500 text-xs">Nice workout!</p></div>
+            <div className={`relative overflow-hidden ${colors.bg} border-l-4 ${colors.border} rounded-2xl p-3 flex items-center gap-3 shadow-sm`}>
+              <img src="./celebration.png" alt="" className="absolute right-0 top-0 h-full w-24 object-cover opacity-60" />
+              <div className={`${colors.bg} p-1.5 rounded-full z-10 border ${colors.border}`}><Check size={18} className={colors.text} /></div>
+              <div className="z-10"><p className={`font-bold text-sm leading-tight ${colors.text}`}>メニュー{menus[todayRecord]?.title.replace('メニュー ', '')} 完了！</p><p className="text-gray-500 text-xs">Nice workout!</p></div>
             </div>
           );
         })()}
         {isTodaySquatDone && (
-          <div className="relative overflow-hidden bg-green-50 border-l-4 border-green-400 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
-            <img src="./squat.png" alt="" className="absolute right-0 top-0 h-full w-28 object-cover opacity-60" />
-            <div className="bg-green-50 p-2 rounded-full z-10 border border-green-400"><Activity size={24} className="text-green-600" /></div>
-            <div className="z-10"><p className="font-bold text-lg text-green-700">{squatSettings.name} {todaySquat}{squatSettings.unit}</p><p className="text-gray-500 text-xs">ナイス貯筋！</p></div>
+          <div className="relative overflow-hidden bg-green-50 border-l-4 border-green-400 rounded-2xl p-3 flex items-center gap-3 shadow-sm">
+            <img src="./squat.png" alt="" className="absolute right-0 top-0 h-full w-24 object-cover opacity-60" />
+            <div className="bg-green-50 p-1.5 rounded-full z-10 border border-green-400"><Activity size={18} className="text-green-600" /></div>
+            <div className="z-10"><p className="font-bold text-sm leading-tight text-green-700">{squatSettings.name} {todaySquat}{squatSettings.unit}</p><p className="text-gray-500 text-xs">ナイス貯筋！</p></div>
           </div>
         )}
 
-        {!todayRecord && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between px-1">
-              <p className="text-gray-400 font-bold flex items-center gap-2 text-xs uppercase tracking-wider"><Activity size={14} /> 今日の運動メニュー</p>
-              {todayReserved && <span className="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full font-bold flex items-center gap-1 animate-pulse"><Clock size={10} /> 予約あり</span>}
-            </div>
-            {/* アクティブなメニューを動的に表示 */}
-            <div className="grid grid-cols-2 gap-4">
-              {Object.values(menus).filter(m => m.isActive).map(menu => (
-                <button key={menu.id} onClick={() => startWorkout(menu.id)} className={`relative overflow-hidden bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all group text-left border-l-4 ${menu.borderColor}`}>
-                  <img src={`./menu_${menu.id.toLowerCase()}.png`} alt="" className="absolute -right-2 -top-2 w-20 h-20 object-cover opacity-40 group-hover:opacity-60 transition-opacity rounded-xl" />
-                  <span className={`block ${menu.textColor} font-black text-lg mb-1 relative z-10`}>{menu.title}</span>
-                  <span className="block text-gray-500 font-medium text-xs relative z-10 line-clamp-2 leading-relaxed">{menu.items.map(i => i.name).join(' & ')}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="pt-4 border-t border-gray-100">
-          <p className="text-gray-400 font-bold flex items-center gap-2 text-xs uppercase tracking-wider mb-3 px-1"><Zap size={14} /> ジム外アクティビティ</p>
-          <button onClick={() => setCurrentView('squat')} className="relative overflow-hidden w-full bg-white border border-green-100 p-5 rounded-2xl shadow-sm flex items-center justify-between group hover:border-green-300 hover:shadow-md transition-all">
-            <img src="./squat.png" alt="" className="absolute right-0 top-0 h-full w-28 object-cover opacity-60 group-hover:opacity-80 transition-opacity" />
-            <div className="flex items-center gap-4 z-10">
-              <div className="bg-green-100 p-3 rounded-xl text-green-600 group-hover:bg-green-500 group-hover:text-white transition-colors"><Zap size={22} /></div>
-              <div className="text-left">
-                <span className="block text-gray-800 font-bold text-lg">{squatSettings.name}</span>
-                <div className="text-xs text-gray-400 flex items-center gap-2 mt-0.5">
-                  <span>今月の貯筋: <b>{paceData.monthlySquatTotal}</b>{squatSettings.unit}</span>
+        {!todayRecord && (() => {
+          const activeMenus = Object.values(menus).filter(m => m.isActive);
+          return (
+            <div className="space-y-2">
+              {todayReserved && (
+                <div className="flex justify-end px-1">
+                  <span className="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Clock size={10} /> 今日は予約あり</span>
                 </div>
+              )}
+              {/* 有効なメニューが1つなら横長1枚。選択肢が少ないほど迷わない */}
+              <div className={`grid gap-3 ${activeMenus.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                {activeMenus.map(menu => (
+                  <button key={menu.id} onClick={() => startWorkout(menu.id)} className={`relative overflow-hidden bg-white p-3 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all group text-left border-l-4 ${menu.borderColor}`}>
+                    <img src={`./menu_${menu.id.toLowerCase()}.png`} alt="" className="absolute -right-1 -top-1 w-14 h-14 object-cover opacity-40 rounded-xl" />
+                    <span className={`block ${menu.textColor} font-black text-base leading-tight relative z-10`}>{menu.title}</span>
+                    <span className="block text-gray-500 font-medium text-[11px] relative z-10 line-clamp-1 mt-0.5">{menu.items.map(i => i.name).join(' & ')}</span>
+                  </button>
+                ))}
               </div>
             </div>
-            <ChevronRight className="text-gray-300 group-hover:text-green-500 transition-colors z-10" />
+          );
+        })()}
+
+        <div className="pt-2 border-t border-gray-100 space-y-2">
+          <button onClick={() => setCurrentView('squat')} className="relative overflow-hidden w-full bg-white border border-green-100 p-3 rounded-2xl shadow-sm flex items-center justify-between group hover:border-green-300 transition-all">
+            <img src="./squat.png" alt="" className="absolute right-0 top-0 h-full w-24 object-cover opacity-60" />
+            <div className="flex items-center gap-3 z-10">
+              <div className="bg-green-100 p-2 rounded-xl text-green-600"><Zap size={18} /></div>
+              <div className="text-left">
+                <span className="block text-gray-800 font-bold text-base leading-tight">{squatSettings.name}</span>
+                <span className="text-[11px] text-gray-400">今月の貯筋: <b>{paceData.monthlySquatTotal}</b>{squatSettings.unit}</span>
+              </div>
+            </div>
+            <ChevronRight size={18} className="text-gray-300 z-10" />
           </button>
+
+          {/* オフィスでの1分：押すだけ。回数もセット数も聞かない */}
+          <div className="grid grid-cols-2 gap-3">
+            {OFFICE_MOVES.map(m => {
+              const count = getOfficeCount(todayStr, m.kind);
+              return (
+                <div key={m.kind} className={`rounded-2xl border p-2.5 ${count > 0 ? 'bg-sky-50 border-sky-200' : 'bg-white border-gray-100'}`}>
+                  <button
+                    onClick={() => addOfficeMove(m.kind)}
+                    className="w-full flex items-center gap-2 text-left active:scale-95 transition-transform"
+                  >
+                    <div className={`shrink-0 p-1.5 rounded-xl ${count > 0 ? 'bg-sky-100 text-sky-600' : 'bg-gray-100 text-gray-400'}`}>
+                      <m.Icon size={20} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-gray-800 font-bold text-sm leading-tight">{m.label}</span>
+                      <span className="block text-[10px] text-gray-400 truncate">{m.hint}</span>
+                    </div>
+                    <span className={`shrink-0 text-xl font-black leading-none ${count > 0 ? 'text-sky-600' : 'text-gray-300'}`}>{count}</span>
+                  </button>
+                  {count > 0 && (
+                    <button
+                      onClick={() => undoOfficeMove(m.kind)}
+                      className="mt-1 text-[10px] text-gray-400 hover:text-gray-600 underline"
+                    >
+                      1つ戻す
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       {renderCalendar()}
-
-      <div className="text-center text-[10px] text-gray-300 mt-8 mb-4 font-medium">
-        カレンダーの日付をタップして<br />記録の修正や予定の登録ができます
-      </div>
 
       {renderEditModal()}
     </div>

@@ -363,6 +363,9 @@ export default function App() {
   const [history, setHistory] = useState({});
   const [squatHistory, setSquatHistory] = useState({});
   const [officeMoves, setOfficeMoves] = useState({});
+  // 押した直後に「記録した」と分かるための一言（数秒で消える）
+  const [officeToast, setOfficeToast] = useState(null);
+  const officeToastTimer = useRef(null);
   const [reservations, setReservations] = useState({});
   // メニューデータをStateで管理
   const [menus, setMenus] = useState(DEFAULT_MENUS);
@@ -561,6 +564,34 @@ export default function App() {
     const dateStr = getTodayString();
     const record = { id: String(Date.now()) + '-' + kind, kind };
     setOfficeMoves(prev => ({ ...prev, [dateStr]: [...(prev[dateStr] || []), record] }));
+
+    // 日付が変わると「今日の回数」は0に戻るので、積み上がった数を押した瞬間に見せる
+    const move = OFFICE_MOVES.find(m => m.kind === kind);
+    const monthNo = getOfficeMonthCount(kind) + 1;
+    setOfficeToast({ key: record.id, text: `${move ? move.label : ''}を記録しました・今月${monthNo}回目` });
+    clearTimeout(officeToastTimer.current);
+    officeToastTimer.current = setTimeout(() => setOfficeToast(null), 2500);
+  };
+
+  // 今月の合計（その動きを押した回数）
+  const getOfficeMonthCount = (kind) => {
+    const prefix = getTodayString().slice(0, 7);
+    return Object.entries(officeMoves)
+      .filter(([d]) => d.startsWith(prefix))
+      .reduce((n, [, list]) => n + (list || []).filter(r => r.kind === kind).length, 0);
+  };
+
+  // 何日続いているか。今日まだ押していなくても、昨日まで続いていれば途切れていない扱い
+  const getOfficeStreak = (kind) => {
+    const has = (d) => (officeMoves[formatDateString(d)] || []).some(r => r.kind === kind);
+    const day = new Date();
+    if (!has(day)) day.setDate(day.getDate() - 1);
+    let streak = 0;
+    while (has(day)) {
+      streak++;
+      day.setDate(day.getDate() - 1);
+    }
+    return streak;
   };
 
   // 押し間違いを1タップで戻せるようにする（その日の最後の1件を消す）
@@ -938,6 +969,10 @@ export default function App() {
                 <span className={`relative z-10 text-sm font-medium leading-none ${textClass} ${squatDecoration} ${isToday ? 'underline decoration-2 decoration-gray-400 underline-offset-4' : ''}`}>
                   {day.getDate()}
                 </span>
+                {/* オフィスでの1分をやった日：右上に水色の点 */}
+                {(officeMoves[dateStr] || []).length > 0 && (
+                  <div className="absolute top-0.5 right-1.5 z-10 w-1.5 h-1.5 rounded-full bg-sky-400"></div>
+                )}
                 {isReserved && !menu && !isSquatDone && (
                   <div className="absolute bottom-0 z-10"><Clock size={8} className="text-yellow-500/70" /></div>
                 )}
@@ -954,6 +989,7 @@ export default function App() {
             </div>
           ))}
           <div className="flex items-center gap-1.5"><div className="w-2.5 h-0.5 bg-green-500"></div> {squatSettings.name}</div>
+          <div className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-sky-400"></div> 肩回し・背伸び</div>
           <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-red-200 opacity-50 relative flex items-center justify-center"><div className="w-2 h-0.5 bg-green-500 absolute bottom-0.5"></div></div> ダブル達成</div>
         </div>
 
@@ -1406,6 +1442,8 @@ export default function App() {
           <div className="grid grid-cols-2 gap-3">
             {OFFICE_MOVES.map(m => {
               const count = getOfficeCount(todayStr, m.kind);
+              const monthCount = getOfficeMonthCount(m.kind);
+              const streak = getOfficeStreak(m.kind);
               return (
                 <div key={m.kind} className={`rounded-2xl border p-3 ${count > 0 ? 'bg-sky-50 border-sky-200' : 'bg-white border-gray-100'}`}>
                   <button
@@ -1419,20 +1457,32 @@ export default function App() {
                       <span className="block text-gray-800 font-bold text-sm leading-tight">{m.label}</span>
                       <span className="block text-[10px] text-gray-400 truncate">{m.hint}</span>
                     </div>
-                    <span className={`shrink-0 text-xl font-black leading-none ${count > 0 ? 'text-sky-600' : 'text-gray-300'}`}>{count}</span>
+                    <span className="shrink-0 text-right leading-none">
+                      <span className={`block text-xl font-black ${count > 0 ? 'text-sky-600' : 'text-gray-300'}`}>{count}</span>
+                      <span className="block text-[9px] text-gray-400 mt-0.5">今日</span>
+                    </span>
                   </button>
-                  {count > 0 && (
-                    <button
-                      onClick={() => undoOfficeMove(m.kind)}
-                      className="mt-1 text-[10px] text-gray-400 hover:text-gray-600 underline"
-                    >
-                      1つ戻す
-                    </button>
-                  )}
+                  {/* 積み上がった数。日付が変わっても消えない */}
+                  <div className="mt-1.5 flex items-center justify-between text-[10px]">
+                    <span className="text-gray-500">今月 <b className="text-sky-700 text-xs">{monthCount}</b>回{streak >= 2 && <span className="ml-1 text-orange-500 font-bold">{streak}日連続</span>}</span>
+                    {count > 0 && (
+                      <button
+                        onClick={() => undoOfficeMove(m.kind)}
+                        className="text-gray-400 hover:text-gray-600 underline"
+                      >
+                        1つ戻す
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
           </div>
+          {officeToast && (
+            <div key={officeToast.key} className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 whitespace-nowrap text-xs font-bold text-white bg-sky-600 rounded-full shadow-lg px-4 py-2">
+              <Check size={12} /> {officeToast.text}
+            </div>
+          )}
         </div>
       </div>
 
